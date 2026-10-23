@@ -6,8 +6,10 @@ import { timingSafeEqual } from "node:crypto";
 const CATEGORIES = new Set(["machine_modules", "air_sensors", "online_dosers"]);
 const DEVICE_KEY = "hitest:web:devices";
 const EVENT_KEY = "hitest:web:events";
+const STATUS_KEY = "hitest:web:device-status";
 const MAX_DEVICES = 100;
-const MAX_EVENTS = 100;
+const DEFAULT_EVENT_PAGE_SIZE = 50;
+const MAX_EVENT_PAGE_SIZE = 100;
 const DEVICE_TIMEOUT_MS = 4000;
 const STATUS_CONCURRENCY = 50;
 
@@ -159,35 +161,83 @@ function validateDevices(input) {
 
 async function appendEvent(redis, event) {
   await redis.lpush(EVENT_KEY, JSON.stringify({ ...event, timestamp: new Date().toISOString() }));
-  await redis.ltrim(EVENT_KEY, 0, MAX_EVENTS - 1);
 }
 
 async function getDevices(redis) {
   return (await redis.get(DEVICE_KEY)) || [];
 }
 
-async function getStatus(devices) {
+async function getStatus(redis, devices, probeDevice = deviceRequest) {
+  const previousStatuses = await redis.hgetall(STATUS_KEY) || {};
+  const statusUpdates = {};
+  const transitions = [];
   const results = [];
   for (let offset = 0; offset < devices.length; offset += STATUS_CONCURRENCY) {
     const batch = devices.slice(offset, offset + STATUS_CONCURRENCY);
     results.push(...await Promise.all(batch.map(async (device) => {
+      const stored = previousStatuses[device.id];
+      const previous = typeof stored === "string" ? JSON.parse(stored) : stored;
+      const checkedAt = new Date().toISOString();
       try {
-        const response = await deviceRequest(device, "/heartbeat");
+        const response = await probeDevice(device, "/heartbeat");
         const payload = JSON.parse(response.body.toString("utf8"));
         if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("Resposta de heartbeat inválida.");
-        return {
+        const status = {
           ...device,
           status: "online",
           version: typeof payload.version === "string" ? payload.version : null,
           uptime: typeof payload.uptime === "string" || typeof payload.uptime === "number" ? String(payload.uptime) : null,
           device_status: typeof payload.status === "string" ? payload.status : null,
+          checkedAt,
+          lastSeen: checkedAt,
         };
+        statusUpdates[device.id] = JSON.stringify(status);
+        if (previous?.status !== "online") transitions.push({ type: "device_online", device: device.id, description: `${device.id} está online.` });
+        return status;
       } catch (error) {
-        return { ...device, status: "offline", version: null, uptime: null, device_status: null, error: error.message };
+        const status = {
+          ...device,
+          status: "offline",
+          version: previous?.version || null,
+          uptime: previous?.uptime || null,
+          device_status: previous?.device_status || null,
+          checkedAt,
+          lastSeen: previous?.lastSeen || null,
+          error: error.message,
+        };
+        statusUpdates[device.id] = JSON.stringify(status);
+        if (previous?.status !== "offline") transitions.push({ type: "device_offline", device: device.id, description: `${device.id} está offline.` });
+        return status;
       }
     })));
   }
+  if (Object.keys(statusUpdates).length) await redis.hset(STATUS_KEY, statusUpdates);
+  for (const transition of transitions) await appendEvent(redis, transition);
   return results;
+}
+
+function getPageParameters(query) {
+  const offset = Number(query?.offset ?? 0);
+  const requestedLimit = Number(query?.limit ?? DEFAULT_EVENT_PAGE_SIZE);
+  if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(requestedLimit) || requestedLimit < 1) {
+    const error = new Error("A paginação de eventos é inválida.");
+    error.status = 400;
+    throw error;
+  }
+  return { offset, limit: Math.min(requestedLimit, MAX_EVENT_PAGE_SIZE) };
+}
+
+async function getEventPage(redis, offset, limit) {
+  const [events, total] = await Promise.all([
+    redis.lrange(EVENT_KEY, offset, offset + limit - 1),
+    redis.llen(EVENT_KEY),
+  ]);
+  return {
+    events: events.map((event) => typeof event === "string" ? JSON.parse(event) : event),
+    total,
+    offset,
+    hasMore: offset + events.length < total,
+  };
 }
 
 function decodePath(path) {
@@ -196,7 +246,7 @@ function decodePath(path) {
   return [];
 }
 
-export { decodePath, isPublicAddress, validateDevices };
+export { appendEvent, decodePath, getEventPage, getPageParameters, getStatus, isPublicAddress, validateDevices };
 
 export default async function handler(request, response) {
   try {
@@ -218,16 +268,16 @@ export default async function handler(request, response) {
       return respond(response, 200, { devices });
     }
     if (path.length === 1 && path[0] === "status" && request.method === "GET") {
-      return respond(response, 200, { devices: await getStatus(await getDevices(redis)) });
+      return respond(response, 200, { devices: await getStatus(redis, await getDevices(redis)) });
     }
     if (path.length === 1 && path[0] === "events" && request.method === "GET") {
-      const events = await redis.lrange(EVENT_KEY, 0, MAX_EVENTS - 1);
-      return respond(response, 200, { events: events.map((event) => typeof event === "string" ? JSON.parse(event) : event) });
+      const { offset, limit } = getPageParameters(request.query);
+      return respond(response, 200, await getEventPage(redis, offset, limit));
     }
     if (path.length === 3 && path[0] === "devices" && path[2] === "heartbeat" && request.method === "GET") {
       const device = (await getDevices(redis)).find(({ id }) => id === path[1]);
       if (!device) return respond(response, 404, { detail: "Dispositivo não encontrado." });
-      return respond(response, 200, (await getStatus([device]))[0]);
+      return respond(response, 200, (await getStatus(redis, [device]))[0]);
     }
     if (path.length === 3 && path[0] === "devices" && path[2] === "command" && request.method === "POST") {
       const device = (await getDevices(redis)).find(({ id }) => id === path[1]);

@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { decodePath, isPublicAddress, validateDevices } from "../api/[...path].js";
+import {
+  appendEvent,
+  decodePath,
+  getEventPage,
+  getPageParameters,
+  getStatus,
+  isPublicAddress,
+  validateDevices,
+} from "../api/[...path].js";
 
 const validDevice = {
   id: "module-01",
@@ -55,7 +63,61 @@ test("provides responsive breakpoints and mobile-friendly device rows", async ()
     assert.ok(stylesheet.includes(`max-width: ${breakpoint}`), `missing ${breakpoint} responsive breakpoint`);
   }
   assert.match(stylesheet, /prefers-reduced-motion/);
+  assert.match(stylesheet, /\[hidden\]\s*\{\s*display:\s*none\s*!important/);
   assert.match(stylesheet, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(stylesheet, /content: attr\(data-label\)/);
   assert.match(app, /data-label="Endpoint HTTPS"/);
+});
+
+test("keeps activity events without automatic trimming and paginates the full history", async () => {
+  const storedEvents = [];
+  const redis = {
+    async lpush(_key, event) { storedEvents.unshift(event); },
+    async lrange(_key, start, end) { return storedEvents.slice(start, end + 1); },
+    async llen() { return storedEvents.length; },
+  };
+  await appendEvent(redis, { type: "first" });
+  await appendEvent(redis, { type: "second" });
+  const firstPage = await getEventPage(redis, 0, 1);
+  const secondPage = await getEventPage(redis, 1, 1);
+  assert.equal(firstPage.total, 2);
+  assert.equal(firstPage.hasMore, true);
+  assert.equal(secondPage.hasMore, false);
+  assert.equal(secondPage.events[0].type, "first");
+  assert.equal(typeof getPageParameters({ offset: "0", limit: "50" }).limit, "number");
+  assert.throws(() => getPageParameters({ offset: "-1", limit: "10" }), /inválida/);
+  assert.equal(storedEvents.length, 2);
+});
+
+test("does not configure an automatic retention limit for stored data", async () => {
+  const api = await readFile(new URL("../api/[...path].js", import.meta.url), "utf8");
+  assert.doesNotMatch(api, /MAX_EVENTS|ltrim|expire\(/i);
+  assert.match(api, /redis\.hset\(STATUS_KEY, statusUpdates\)/);
+  assert.match(api, /redis\.lpush\(EVENT_KEY/);
+});
+
+test("persists the latest device status and preserves last-seen metrics while offline", async () => {
+  const previous = {
+    status: "online",
+    version: "2.0",
+    uptime: "5 dias",
+    device_status: "ready",
+    lastSeen: "2026-10-22T12:00:00.000Z",
+  };
+  let saved;
+  const redis = {
+    async hgetall() { return { "module-01": JSON.stringify(previous) }; },
+    async hset(_key, values) { saved = values; },
+    async lpush() {},
+  };
+  const result = await getStatus(redis, [validDevice], async () => {
+    throw new Error("offline");
+  });
+  assert.equal(result[0].status, "offline");
+  assert.equal(result[0].version, "2.0");
+  assert.equal(result[0].lastSeen, previous.lastSeen);
+  const persisted = JSON.parse(saved["module-01"]);
+  assert.equal(persisted.status, "offline");
+  assert.equal(persisted.version, "2.0");
+  assert.ok(persisted.checkedAt);
 });

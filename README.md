@@ -1,14 +1,20 @@
 # HITEST Web
 
-Painel web em português com várias telas para monitorar módulos de máquina, sensores de ar e dosadores HITEST. **Frontend, API e persistência rodam na Vercel**: as funções serverless fornecem a API e um Redis Upstash vinculado ao projeto mantém os dispositivos e o histórico recente. Não há processo FastAPI ou servidor de aplicação para manter em outro computador.
+Painel web em português com várias telas para monitorar módulos de máquina, sensores de ar e dosadores HITEST. **Frontend, API e persistência rodam na Vercel**: as funções serverless fornecem a API e um Redis Upstash vinculado ao projeto mantém os dispositivos, o último estado de cada equipamento e o histórico completo de atividades. Não há processo FastAPI ou servidor de aplicação para manter em outro computador.
 
 O repositório começa sem dispositivos nem endereços privados. Cada dispositivo é configurado com uma URL HTTPS segura. O backend valida o domínio, resolve os endereços antes da conexão e bloqueia destinos não públicos; as chamadas HTTPS usam o endereço validado e não seguem redirecionamentos.
+
+## Persistência dos dados
+
+As configurações de dispositivos, o status mais recente (incluindo versão, uptime e horário da última resposta) e o histórico de atividade são salvos no Redis persistente da Vercel. **A aplicação não define prazo de expiração, não remove eventos antigos e não apaga esses dados ao recarregar a página, encerrar a sessão ou fazer deploy.** Os eventos são exibidos em páginas para que históricos grandes continuem acessíveis. Mudanças de status só geram um novo evento quando o equipamento troca entre online e offline; as verificações periódicas atualizam o último status sem gerar centenas de cópias idênticas.
+
+Os dados permanecem enquanto o banco Upstash vinculado existir e mantiver a configuração normal de persistência do provedor. Excluir/desvincular o banco ou apagá-lo no painel do provedor remove o armazenamento da aplicação; para recuperação de desastres, configure backups/snapshots no Upstash e mantenha as credenciais de recuperação seguras. A ação **Remover dispositivo** exclui o dispositivo da lista ativa intencionalmente, mas não apaga eventos já registrados.
 
 ## Telas
 
 - **Visão geral:** contagem, disponibilidade, estado dos equipamentos e atualização a cada 15 segundos.
 - **Dispositivos:** cadastro, edição, remoção, busca, filtros por categoria e importação/exportação JSON.
-- **Atividade:** últimos 100 comandos e alterações de configuração.
+- **Atividade:** histórico completo de comandos, alterações de configuração e transições de status, apresentado em páginas.
 - **Configurações:** estado de autenticação, Redis e orientação de conectividade segura.
 
 ## Layout adaptável
@@ -55,7 +61,7 @@ npm test
 3. Configure `HITEST_API_TOKEN` com um segredo aleatório forte (mínimo de 32 caracteres) nas variáveis de ambiente do projeto e faça um novo deploy.
 4. Abra o domínio HTTPS publicado e informe esse token na tela **Configurações**.
 
-O token de API é validado na função serverless e fica somente na memória da sessão do navegador (`sessionStorage`); ele nunca deve ser colocado em variáveis `VITE_*`, código público, URL ou configuração versionada. A lista de dispositivos e os eventos ficam no Redis vinculado ao projeto, não no filesystem efêmero da função.
+O token de API é validado na função serverless e fica somente na memória da sessão do navegador (`sessionStorage`); ele nunca deve ser colocado em variáveis `VITE_*`, código público, URL ou configuração versionada. A lista de dispositivos, os status mais recentes e o histórico completo ficam no Redis vinculado ao projeto, não no filesystem efêmero da função.
 
 ## Conectar equipamentos da rede
 
@@ -74,6 +80,6 @@ Todos os caminhos exigem `Authorization: Bearer <HITEST_API_TOKEN>`.
 | `GET` | `/api/status` | Consulta `/heartbeat` dos dispositivos e retorna disponibilidade. |
 | `GET` | `/api/devices/{id}/heartbeat` | Consulta um equipamento. |
 | `POST` | `/api/devices/{id}/command` | Envia `/lb` para módulos de máquina e dosadores. |
-| `GET` | `/api/events` | Lista os eventos recentes. |
+| `GET` | `/api/events?offset=0&limit=50` | Lê uma página do histórico permanente de eventos. |
 
 Categorias: `machine_modules`, `air_sensors`, `online_dosers`. O endpoint de um dispositivo precisa ser HTTPS em domínio público; endereços IP literais, hosts internos, respostas DNS privadas e redirecionamentos são rejeitados. As consultas têm limite de tempo e tamanho de resposta.

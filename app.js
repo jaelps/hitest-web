@@ -13,6 +13,8 @@
     screen: "overview",
     token: sessionStorage.getItem("hitest-api-token") || "",
     events: [],
+    eventsHasMore: false,
+    eventsLoading: false,
     busy: false,
   };
 
@@ -77,11 +79,19 @@
       const canCommand = device.category !== "air_sensors";
       let endpointHost = "—";
       try { endpointHost = new URL(device.endpoint).host; } catch { /* Invalid imported data is rejected by the API. */ }
+      let lastSeen = "Nunca";
+      if (device.lastSeen) {
+        const timestamp = new Date(device.lastSeen);
+        if (!Number.isNaN(timestamp.getTime())) {
+          lastSeen = timestamp.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+        }
+      }
       return `<tr>
         <td data-label="Dispositivo"><div class="device-name"><span class="device-avatar">${categoryIcons[device.category]}</span><span>${escapeHtml(device.id)}<span class="device-id">HITEST DEVICE</span></span></div></td>
         <td data-label="Categoria"><span class="category-tag">${categoryNames[device.category]}</span></td>
         <td data-label="Endpoint HTTPS"><span class="ip-address">${escapeHtml(endpointHost)}</span></td>
         <td data-label="Status"><span class="status-pill ${status}">${statusLabel}</span></td>
+        <td data-label="Última resposta"><span class="uptime">${escapeHtml(lastSeen)}</span></td>
         <td data-label="Versão"><span class="device-version">${escapeHtml(device.version || "—")}</span></td>
         <td data-label="Tempo ativo"><span class="uptime">${escapeHtml(device.uptime || "—")}</span></td>
         <td data-label="Ações"><div class="row-actions">
@@ -190,7 +200,8 @@
     render();
   });
   $("#settings-connect").addEventListener("click", openSettings);
-  $("#refresh-events").addEventListener("click", loadEvents);
+  $("#refresh-events").addEventListener("click", () => loadEvents());
+  $("#load-more-events").addEventListener("click", () => loadEvents(true));
   $("#refresh-button").addEventListener("click", () => refresh(true));
   $("#add-device").addEventListener("click", () => openDevice(null));
   $("#empty-add-device").addEventListener("click", () => openDevice(null));
@@ -288,22 +299,33 @@
     } catch (error) { notify(`Não foi possível importar: ${error.message}`, true); }
   });
 
-  async function loadEvents() {
+  async function loadEvents(loadMore = false) {
+    if (state.eventsLoading) return;
     if (!state.token) {
       $("#activity-list").innerHTML = '<div class="activity-empty">Configure o token de acesso para consultar os eventos.</div>';
+      $("#load-more-events").hidden = true;
       return;
     }
+    state.eventsLoading = true;
+    const offset = loadMore ? state.events.length : 0;
+    $("#load-more-events").disabled = true;
     try {
-      const result = await request("/events");
-      state.events = result.events;
+      const result = await request(`/events?offset=${offset}&limit=50`);
+      state.events = loadMore ? state.events.concat(result.events) : result.events;
+      state.eventsHasMore = result.hasMore;
       $("#activity-list").innerHTML = state.events.length ? state.events.map((item) => `
         <article class="activity-row">
           <span class="activity-marker ${item.type === "command_failed" ? "failed" : ""}">${item.type === "command_sent" ? "▶" : item.type === "command_failed" ? "!" : "↻"}</span>
           <div class="activity-copy"><strong>${escapeHtml(item.description)}</strong><span>${escapeHtml(item.device || "Sistema")}</span></div>
           <time>${escapeHtml(new Date(item.timestamp).toLocaleString("pt-BR"))}</time>
         </article>`).join("") : '<div class="activity-empty">Ainda não há eventos registrados.</div>';
+      $("#load-more-events").hidden = !state.eventsHasMore;
     } catch (error) {
-      $("#activity-list").innerHTML = `<div class="activity-empty">${escapeHtml(error.message)}</div>`;
+      if (!loadMore || !state.events.length) $("#activity-list").innerHTML = `<div class="activity-empty">${escapeHtml(error.message)}</div>`;
+      else notify(`Não foi possível carregar mais registros: ${error.message}`, true);
+    } finally {
+      state.eventsLoading = false;
+      $("#load-more-events").disabled = false;
     }
   }
 
