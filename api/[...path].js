@@ -4,7 +4,7 @@ import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { timingSafeEqual } from "node:crypto";
 
-const CATEGORIES = new Set(["machine_modules", "air_sensors", "online_dosers"]);
+const CATEGORIES = new Set(["machine_modules", "air_sensors", "online_dosers", "air_conditioners"]);
 const DEVICE_KEY = "hitest:web:devices";
 const EVENT_KEY = "hitest:web:events";
 const STATUS_KEY = "hitest:web:device-status";
@@ -108,6 +108,16 @@ function isPublicAddress(address) {
   return false;
 }
 
+function isValidDeviceIp(address) {
+  if (isIP(address) !== 4) return false;
+  const octets = address.split(".").map(Number);
+  const [a, b] = octets;
+  const privateAddress = a === 10
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168);
+  return privateAddress || isPublicAddress(address);
+}
+
 async function checkedDeviceUrl(endpoint, path) {
   const parsed = new URL(endpoint);
   let addresses;
@@ -181,6 +191,13 @@ function validateDevices(input) {
     }
     if (!CATEGORIES.has(value.category)) throw new Error(`Categoria inválida para ${id}.`);
     seen.add(id);
+    if (value.category === "air_conditioners") {
+      const ip = typeof value.ip === "string" ? value.ip.trim() : "";
+      if (!isValidDeviceIp(ip)) {
+        throw new Error(`Informe um endereço IPv4 local ou público válido para ${id}.`);
+      }
+      return { id, category: value.category, ip };
+    }
     return { id, category: value.category, endpoint: validateEndpoint(value.endpoint) };
   });
 }
@@ -202,6 +219,11 @@ async function getStatus(redis, devices, probeDevice = deviceRequest) {
   for (let offset = 0; offset < devices.length; offset += STATUS_CONCURRENCY) {
     const batch = devices.slice(offset, offset + STATUS_CONCURRENCY);
     results.push(...await Promise.all(batch.map(async (device) => {
+      if (device.category === "air_conditioners") {
+        const status = { ...device, status: "local_only", checkedAt: null, lastSeen: null };
+        statusUpdates[device.id] = JSON.stringify(status);
+        return status;
+      }
       const stored = previousStatuses[device.id];
       const previous = typeof stored === "string" ? JSON.parse(stored) : stored;
       const checkedAt = new Date().toISOString();
@@ -343,11 +365,17 @@ export default async function handler(request, response) {
     if (path.length === 3 && path[0] === "devices" && path[2] === "heartbeat" && request.method === "GET") {
       const device = (await getDevices(redis)).find(({ id }) => id === path[1]);
       if (!device) return respond(response, 404, { detail: "Dispositivo não encontrado." });
+      if (device.category === "air_conditioners") {
+        return respond(response, 400, { detail: "O equipamento é acessado diretamente pelo navegador na rede local." });
+      }
       return respond(response, 200, (await getStatus(redis, [device]))[0]);
     }
     if (path.length === 3 && path[0] === "devices" && path[2] === "command" && request.method === "POST") {
       const device = (await getDevices(redis)).find(({ id }) => id === path[1]);
       if (!device) return respond(response, 404, { detail: "Dispositivo não encontrado." });
+      if (device.category === "air_conditioners") {
+        return respond(response, 400, { detail: "Use o comando local /airon1 pelo navegador na rede do equipamento." });
+      }
       if (device.category === "air_sensors") return respond(response, 400, { detail: "Esta categoria não oferece o comando /lb." });
       try {
         const result = await deviceRequest(device, "/lb");
@@ -357,6 +385,19 @@ export default async function handler(request, response) {
         await appendEvent(redis, { type: "command_failed", device: device.id, description: `Falha no comando para ${device.id}: ${error.message}` });
         return respond(response, 502, { detail: error.message });
       }
+    }
+    if (path.length === 3 && path[0] === "devices" && path[2] === "local-command" && request.method === "POST") {
+      const device = (await getDevices(redis)).find(({ id }) => id === path[1]);
+      if (!device) return respond(response, 404, { detail: "Dispositivo não encontrado." });
+      if (device.category !== "air_conditioners") {
+        return respond(response, 400, { detail: "O comando local /airon1 está disponível apenas para ar-condicionado." });
+      }
+      await appendEvent(redis, {
+        type: "local_command_opened",
+        device: device.id,
+        description: `Comando GET /airon1 aberto no navegador para ${device.id} (${device.ip}).`,
+      });
+      return respond(response, 200, { device: device.id, status: "local_command_opened" });
     }
     if (request.method !== "GET" && request.method !== "PUT" && request.method !== "POST") {
       response.setHeader("Allow", "GET, PUT, POST");

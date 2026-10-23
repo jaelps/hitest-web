@@ -41,6 +41,33 @@ test("accepts public device IPs and HTTPS tunnel URLs with supported categories"
   assert.throws(() => validateDevices([{ ...validDevice, category: "unknown" }]), /Categoria inválida/);
 });
 
+test("stores local air-conditioner IPs without requiring a public endpoint", () => {
+  const device = { id: "ar-01", category: "air_conditioners", ip: "192.168.1.50" };
+  assert.deepEqual(validateDevices([device]), [device]);
+  assert.throws(() => validateDevices([{ ...device, ip: "localhost" }]), /IPv4 local ou público válido/);
+  assert.throws(() => validateDevices([{ ...device, ip: "127.0.0.1" }]), /IPv4 local ou público válido/);
+});
+
+test("does not probe local air-conditioner IPs from the Vercel API", async () => {
+  let probes = 0;
+  let persisted;
+  let historyWrites = 0;
+  const redis = {
+    async hgetall() { return {}; },
+    async hset(_key, values) { persisted = values; },
+    async lpush() { historyWrites++; },
+  };
+  const device = { id: "ar-01", category: "air_conditioners", ip: "192.168.1.50" };
+  const result = await getStatus(redis, [device], async () => {
+    probes++;
+    throw new Error("local address must not be reached by the server");
+  });
+  assert.equal(probes, 0);
+  assert.equal(result[0].status, "local_only");
+  assert.equal(JSON.parse(persisted["ar-01"]).ip, device.ip);
+  assert.equal(historyWrites, 0);
+});
+
 test("rejects duplicate ids and malformed device lists", () => {
   assert.throws(() => validateDevices([validDevice, validDevice]), /únicos/);
   assert.throws(() => validateDevices({ devices: [validDevice] }), /lista/);
@@ -64,13 +91,15 @@ test("decodes API route path segments", () => {
   assert.deepEqual(decodePath("devices/module-01/command"), ["devices", "module-01", "command"]);
 });
 
-test("provides the four requested screens and never asks for a private LAN IP", async () => {
+test("provides the requested screens and local air-conditioner registration", async () => {
   const page = await readFile(new URL("../index.html", import.meta.url), "utf8");
   for (const screen of ["overview", "devices", "activity", "settings"]) {
     assert.match(page, new RegExp(`data-screen="${screen}"`));
   }
   assert.match(page, /device-endpoint/);
-  assert.doesNotMatch(page, /device-ip|gateway-url/);
+  assert.match(page, /device-ip/);
+  assert.match(page, /device-metadata-field" hidden/);
+  assert.match(page, /air_conditioners/);
 });
 
 test("provides responsive breakpoints and mobile-friendly device rows", async () => {
@@ -83,7 +112,9 @@ test("provides responsive breakpoints and mobile-friendly device rows", async ()
   assert.match(stylesheet, /\[hidden\]\s*\{\s*display:\s*none\s*!important/);
   assert.match(stylesheet, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(stylesheet, /content: attr\(data-label\)/);
-  assert.match(app, /data-label="Endereço público"/);
+  assert.match(app, /data-label="IP \/ endpoint"/);
+  assert.match(app, /http:\/\/\$\{device\.ip\}\/airon1/);
+  assert.match(app, /`ar-\$\{ip\.replace\(\/\\\.\/g, "-"\)\}`/);
 });
 
 test("keeps activity events without automatic trimming and paginates the full history", async () => {

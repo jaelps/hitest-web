@@ -2,7 +2,7 @@
 
 Painel web em português com várias telas para monitorar módulos de máquina, sensores de ar e dosadores HITEST. **Frontend, API e persistência rodam na Vercel**: as funções serverless fornecem a API e um Redis Upstash vinculado ao projeto mantém os dispositivos, o último estado de cada equipamento e o histórico completo de atividades. Não há processo FastAPI ou servidor de aplicação para manter em outro computador.
 
-O repositório começa sem dispositivos nem endereços de rede. Não é necessário instalar ou manter um programa nas máquinas dos equipamentos: a API serverless da Vercel envia as consultas e comandos diretamente para endereços públicos. Para destinos por domínio, exige HTTPS; também aceita IP público IPv4 em HTTP (porta 80) e IP público IPv4/IPv6 em HTTPS (porta 443). IPs privados, destinos que resolvem para endereços privados e portas personalizadas são bloqueados.
+O repositório começa sem dispositivos nem endereços de rede. Não é necessário instalar ou manter programas nos equipamentos. Módulos, sensores e dosadores são consultados pela API Vercel através de endpoints públicos. Para ar-condicionado, o painel guarda o IP cadastrado e abre no navegador `http://<IP>/airon1`; o comando segue diretamente pela rede conectada ao computador/celular, sem passar pela Vercel.
 
 ## Persistência dos dados
 
@@ -10,14 +10,15 @@ As configurações de dispositivos, o status mais recente (incluindo versão, up
 
 Os dados permanecem enquanto o banco Upstash vinculado existir e mantiver a configuração normal de persistência do provedor. Excluir/desvincular o banco ou apagá-lo no painel do provedor remove o armazenamento da aplicação; para recuperação de desastres, configure backups/snapshots no Upstash e mantenha as credenciais de recuperação seguras. A ação **Remover dispositivo** exclui o dispositivo da lista ativa intencionalmente, mas não apaga as leituras e os eventos já registrados. O histórico por dispositivo também pode ser consultado pelo ID após sua remoção.
 
-Cada verificação periódica gera um registro permanente por dispositivo. Como a tela consulta o status a cada 15 segundos, o espaço consumido e o custo do banco crescem continuamente com o número de dispositivos e o tempo de uso; acompanhe os limites e preços do plano Upstash. Os registros permanecem disponíveis até serem removidos manualmente ou o banco ser apagado.
+Cada verificação periódica dos dispositivos remotos gera um registro permanente. Como a tela consulta o status a cada 15 segundos, o espaço consumido e o custo do banco crescem continuamente com o número de dispositivos monitorados e o tempo de uso; acompanhe os limites e preços do plano Upstash. Ar-condicionados locais não geram snapshots de heartbeat. Os registros permanecem disponíveis até serem removidos manualmente ou o banco ser apagado.
 
 ## Telas
 
 - **Visão geral:** contagem, disponibilidade, estado dos equipamentos e atualização a cada 15 segundos.
-- **Dispositivos:** cadastro, edição, remoção, busca, filtros por categoria e importação/exportação JSON.
+- **Dispositivos:** cadastro, edição, remoção, busca, filtros por categoria e importação/exportação JSON. O cadastro padrão pede apenas o IP do ar-condicionado; nome e identificador são gerados automaticamente. Para módulos, sensores e dosadores, use a opção de outros tipos.
 - **Atividade:** histórico completo de comandos, alterações de configuração e transições de status, apresentado em páginas; o botão de relógio em cada dispositivo abre as leituras de heartbeat.
 - **Configurações:** estado de autenticação, Redis e orientação de conectividade segura.
+- **Comando local:** depois da confirmação, o botão do ar-condicionado abre `GET http://<IP>/airon1` em uma nova aba. Não usa `fetch`, então não depende de CORS nem de instalar um programa local.
 
 ## Layout adaptável
 
@@ -67,9 +68,11 @@ O token de API é validado na função serverless e fica somente na memória da 
 
 ## Conectar equipamentos da rede
 
-Não é necessário instalar um agente ou manter um servidor em nenhum computador da rede: o backend hospedado na Vercel se conecta diretamente ao endereço público cadastrado. Para cada equipamento, configure um IP público estático ou um domínio público e permita a conexão de entrada do serviço nas portas aceitas pela aplicação: HTTP/IPv4 na porta 80, ou HTTPS na porta 443. Se o equipamento estiver atrás de um roteador, será necessário configurar o acesso/encaminhamento de rede nele; isso não exige instalar software no computador. A API não aceita IPs privados nem portas personalizadas.
+Para controlar um ar-condicionado sem instalar nada, use **Adicionar dispositivo** e informe somente o IPv4 do equipamento; não é necessário preencher nome ou categoria. A aplicação gera automaticamente o identificador a partir do IP e salva o cadastro no Redis. Use o celular ou computador na mesma rede local. O navegador abre o endereço HTTP do dispositivo em outra aba, enviando `GET /airon1`; a resposta do próprio equipamento aparece nessa aba. A Vercel salva o IP e registra que a ação foi aberta, mas não envia o comando nem tenta monitorar esse IP.
 
-**Limites e segurança:** se o equipamento só tiver IP privado e não houver acesso público configurado, não existe uma forma da Vercel alcançá-lo sem um caminho de rede adicional (VPN, túnel ou gateway); a aplicação não tenta contornar isso. HTTP não criptografa o tráfego entre a Vercel e o equipamento. O token da aplicação protege a API, mas não substitui autenticação no próprio equipamento. Expor `/lb` ou a interface de um dispositivo diretamente à internet pode permitir que terceiros alcancem esses serviços; prefira HTTPS, habilite autenticação e controles de acesso no equipamento/rede, e não publique uma porta desprotegida. Endereços dinâmicos precisam ser atualizados na configuração quando mudarem.
+Navegação direta não usa `fetch`, então não depende de CORS. Como o dispositivo usa HTTP, o comando e a resposta não são criptografados; use somente em uma rede confiável. O navegador pode exibir um aviso de segurança ou, por política local, impedir a navegação de uma página HTTPS para um endereço HTTP. Nesses casos, não há um modo browser-only garantido para contornar a proteção: seria necessário HTTPS no dispositivo ou um app/gateway que faça a chamada local. IPs dinâmicos precisam ser atualizados no cadastro.
+
+Módulos, sensores e dosadores continuam sendo monitorados pela rota serverless. Eles exigem domínio HTTPS público ou IP público; a Vercel não consegue acessar diretamente endereços privados da rede local.
 
 ## API
 
@@ -78,11 +81,12 @@ Todos os caminhos exigem `Authorization: Bearer <HITEST_API_TOKEN>`.
 | Método | Caminho | Função |
 | --- | --- | --- |
 | `GET` | `/api/devices` | Lista a configuração. |
-| `PUT` | `/api/devices` | Substitui a lista no Redis: `{"devices":[{"id":"modulo-01","category":"machine_modules","endpoint":"http://IPV4-PUBLICO"}]}`. HTTPS em domínio público também é aceito. |
-| `GET` | `/api/status` | Consulta `/heartbeat` dos dispositivos e retorna disponibilidade. |
-| `GET` | `/api/devices/{id}/heartbeat` | Consulta um equipamento. |
+| `PUT` | `/api/devices` | Substitui a lista no Redis. Dispositivos remotos usam `endpoint`; ar-condicionado local usa `{"id":"ar-192-168-1-50","category":"air_conditioners","ip":"192.168.1.50"}`. O formulário gera o identificador automaticamente. |
+| `GET` | `/api/status` | Consulta `/heartbeat` dos dispositivos remotos e marca ar-condicionados como controle local. |
+| `GET` | `/api/devices/{id}/heartbeat` | Consulta um dispositivo remoto. Ar-condicionado é acessado diretamente no navegador. |
 | `POST` | `/api/devices/{id}/command` | Envia `/lb` para módulos de máquina e dosadores. |
+| `POST` | `/api/devices/{id}/local-command` | Registra a abertura do comando local `/airon1`; o navegador acessa diretamente o dispositivo. |
 | `GET` | `/api/events?offset=0&limit=50` | Lê uma página do histórico permanente de eventos. |
 | `GET` | `/api/devices/{id}/history?offset=0&limit=25` | Lê uma página de todas as verificações permanentes do dispositivo, inclusive após sua remoção. |
 
-Categorias: `machine_modules`, `air_sensors`, `online_dosers`. São aceitos IPs públicos IPv4 por HTTP/porta 80, IPs públicos IPv4/IPv6 por HTTPS/porta 443 e domínios públicos somente por HTTPS/porta 443. Endereços privados, respostas DNS privadas, portas personalizadas e redirecionamentos são rejeitados. As consultas têm limite de tempo e tamanho de resposta.
+Categorias: `machine_modules`, `air_sensors`, `online_dosers`, `air_conditioners`. Ar-condicionado salva um IPv4 local ou público, mas o backend nunca faz requisição a esse IP; o navegador abre a rota fixa `/airon1`. As outras categorias continuam protegidas contra destinos não públicos e aceitam domínios HTTPS ou IPs públicos nas portas padrão.
