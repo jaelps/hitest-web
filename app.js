@@ -13,6 +13,12 @@
     screen: "overview",
     token: sessionStorage.getItem("hitest-api-token") || "",
     events: [],
+    eventsHasMore: false,
+    eventsLoading: false,
+    historyDeviceId: null,
+    deviceHistory: [],
+    deviceHistoryHasMore: false,
+    deviceHistoryLoading: false,
     busy: false,
   };
 
@@ -77,15 +83,24 @@
       const canCommand = device.category !== "air_sensors";
       let endpointHost = "—";
       try { endpointHost = new URL(device.endpoint).host; } catch { /* Invalid imported data is rejected by the API. */ }
+      let lastSeen = "Nunca";
+      if (device.lastSeen) {
+        const timestamp = new Date(device.lastSeen);
+        if (!Number.isNaN(timestamp.getTime())) {
+          lastSeen = timestamp.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+        }
+      }
       return `<tr>
-        <td><div class="device-name"><span class="device-avatar">${categoryIcons[device.category]}</span><span>${escapeHtml(device.id)}<span class="device-id">HITEST DEVICE</span></span></div></td>
-        <td><span class="category-tag">${categoryNames[device.category]}</span></td>
-        <td><span class="ip-address">${escapeHtml(endpointHost)}</span></td>
-        <td><span class="status-pill ${status}">${statusLabel}</span></td>
-        <td><span class="device-version">${escapeHtml(device.version || "—")}</span></td>
-        <td><span class="uptime">${escapeHtml(device.uptime || "—")}</span></td>
-        <td><div class="row-actions">
+        <td data-label="Dispositivo"><div class="device-name"><span class="device-avatar">${categoryIcons[device.category]}</span><span>${escapeHtml(device.id)}<span class="device-id">HITEST DEVICE</span></span></div></td>
+        <td data-label="Categoria"><span class="category-tag">${categoryNames[device.category]}</span></td>
+        <td data-label="Endereço público"><span class="ip-address">${escapeHtml(endpointHost)}</span></td>
+        <td data-label="Status"><span class="status-pill ${status}">${statusLabel}</span></td>
+        <td data-label="Última resposta"><span class="uptime">${escapeHtml(lastSeen)}</span></td>
+        <td data-label="Versão"><span class="device-version">${escapeHtml(device.version || "—")}</span></td>
+        <td data-label="Tempo ativo"><span class="uptime">${escapeHtml(device.uptime || "—")}</span></td>
+        <td data-label="Ações"><div class="row-actions">
           ${canCommand ? `<button class="row-action command" data-action="command" data-id="${escapeHtml(device.id)}" title="Executar ação /lb" aria-label="Executar ação em ${escapeHtml(device.id)}">▶</button>` : ""}
+          <button class="row-action" data-action="history" data-id="${escapeHtml(device.id)}" title="Ver histórico salvo" aria-label="Ver histórico salvo de ${escapeHtml(device.id)}">◷</button>
           <button class="row-action" data-action="edit" data-id="${escapeHtml(device.id)}" title="Editar dispositivo" aria-label="Editar ${escapeHtml(device.id)}">✎</button>
           <button class="row-action delete" data-action="delete" data-id="${escapeHtml(device.id)}" title="Remover dispositivo" aria-label="Remover ${escapeHtml(device.id)}">×</button>
         </div></td>
@@ -190,7 +205,8 @@
     render();
   });
   $("#settings-connect").addEventListener("click", openSettings);
-  $("#refresh-events").addEventListener("click", loadEvents);
+  $("#refresh-events").addEventListener("click", () => loadEvents());
+  $("#load-more-events").addEventListener("click", () => loadEvents(true));
   $("#refresh-button").addEventListener("click", () => refresh(true));
   $("#add-device").addEventListener("click", () => openDevice(null));
   $("#empty-add-device").addEventListener("click", () => openDevice(null));
@@ -249,6 +265,7 @@
     const device = state.devices.find((item) => item.id === button.dataset.id);
     if (!device) return;
     if (button.dataset.action === "edit") openDevice(device);
+    if (button.dataset.action === "history") openDeviceHistory(device);
     if (button.dataset.action === "delete") {
       if (!window.confirm(`Remover o dispositivo "${device.id}"?`)) return;
       try {
@@ -288,24 +305,109 @@
     } catch (error) { notify(`Não foi possível importar: ${error.message}`, true); }
   });
 
-  async function loadEvents() {
+  async function loadEvents(loadMore = false) {
+    if (state.eventsLoading) return;
     if (!state.token) {
       $("#activity-list").innerHTML = '<div class="activity-empty">Configure o token de acesso para consultar os eventos.</div>';
+      $("#load-more-events").hidden = true;
       return;
     }
+    state.eventsLoading = true;
+    const offset = loadMore ? state.events.length : 0;
+    $("#load-more-events").disabled = true;
     try {
-      const result = await request("/events");
-      state.events = result.events;
+      const result = await request(`/events?offset=${offset}&limit=50`);
+      state.events = loadMore ? state.events.concat(result.events) : result.events;
+      state.eventsHasMore = result.hasMore;
       $("#activity-list").innerHTML = state.events.length ? state.events.map((item) => `
         <article class="activity-row">
           <span class="activity-marker ${item.type === "command_failed" ? "failed" : ""}">${item.type === "command_sent" ? "▶" : item.type === "command_failed" ? "!" : "↻"}</span>
           <div class="activity-copy"><strong>${escapeHtml(item.description)}</strong><span>${escapeHtml(item.device || "Sistema")}</span></div>
           <time>${escapeHtml(new Date(item.timestamp).toLocaleString("pt-BR"))}</time>
         </article>`).join("") : '<div class="activity-empty">Ainda não há eventos registrados.</div>';
+      $("#load-more-events").hidden = !state.eventsHasMore;
     } catch (error) {
-      $("#activity-list").innerHTML = `<div class="activity-empty">${escapeHtml(error.message)}</div>`;
+      if (!loadMore || !state.events.length) $("#activity-list").innerHTML = `<div class="activity-empty">${escapeHtml(error.message)}</div>`;
+      else notify(`Não foi possível carregar mais registros: ${error.message}`, true);
+    } finally {
+      state.eventsLoading = false;
+      $("#load-more-events").disabled = false;
     }
   }
+
+  function renderDeviceHistory() {
+    $("#device-history-records").innerHTML = state.deviceHistory.length
+      ? state.deviceHistory.map((record) => {
+        const payload = record.payload || {};
+        const values = [
+          ["Dispositivo", payload.device],
+          ["Status informado", payload.status],
+          ["Versão", payload.version],
+          ["Tempo ativo", payload.uptime],
+        ].filter(([, value]) => value !== undefined && value !== null && value !== "");
+        return `<article class="device-history-record">
+          <div class="history-record-heading">
+            <span class="status-pill ${record.status === "online" ? "online" : "offline"}">${record.status === "online" ? "Online" : "Offline"}</span>
+            <time>${escapeHtml(new Date(record.checkedAt).toLocaleString("pt-BR"))}</time>
+          </div>
+          ${values.length ? `<dl>${values.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>` : ""}
+          ${record.error ? `<p class="history-error">${escapeHtml(record.error)}</p>` : ""}
+        </article>`;
+      }).join("")
+      : '<div class="activity-empty">Nenhuma leitura salva para este dispositivo.</div>';
+    $("#history-summary").textContent = state.deviceHistory.length
+      ? `${state.deviceHistory.length} de ${state.deviceHistoryTotal} leituras salvas permanentemente`
+      : `0 de ${state.deviceHistoryTotal || 0} leituras salvas`;
+    $("#load-more-device-history").hidden = !state.deviceHistoryHasMore;
+  }
+
+  async function loadDeviceHistory(loadMore = false) {
+    if (!state.historyDeviceId || state.deviceHistoryLoading) return;
+    const requestedDeviceId = state.historyDeviceId;
+    state.deviceHistoryLoading = true;
+    const offset = loadMore ? state.deviceHistory.length : 0;
+    $("#load-more-device-history").disabled = true;
+    try {
+      const id = encodeURIComponent(requestedDeviceId);
+      const result = await request(`/devices/${id}/history?offset=${offset}&limit=25`);
+      if (state.historyDeviceId !== requestedDeviceId) return;
+      state.deviceHistory = loadMore ? state.deviceHistory.concat(result.records) : result.records;
+      state.deviceHistoryTotal = result.total;
+      state.deviceHistoryHasMore = result.hasMore;
+      renderDeviceHistory();
+    } catch (error) {
+      if (state.historyDeviceId !== requestedDeviceId) return;
+      if (!loadMore || !state.deviceHistory.length) {
+        $("#device-history-records").innerHTML = `<div class="activity-empty">${escapeHtml(error.message)}</div>`;
+        $("#history-summary").textContent = "Não foi possível consultar o histórico.";
+      } else {
+        notify(`Não foi possível carregar mais leituras: ${error.message}`, true);
+      }
+    } finally {
+      state.deviceHistoryLoading = false;
+      $("#load-more-device-history").disabled = false;
+      if (state.historyDeviceId && state.historyDeviceId !== requestedDeviceId) loadDeviceHistory();
+    }
+  }
+
+  function openDeviceHistory(device) {
+    state.historyDeviceId = device.id;
+    state.deviceHistory = [];
+    state.deviceHistoryTotal = 0;
+    state.deviceHistoryHasMore = false;
+    $("#history-device-name").textContent = device.id;
+    $("#history-summary").textContent = "Carregando registros...";
+    $("#device-history-records").innerHTML = "";
+    $("#load-more-device-history").hidden = true;
+    $("#history-dialog").showModal();
+    loadDeviceHistory();
+  }
+
+  $("#load-more-device-history").addEventListener("click", () => loadDeviceHistory(true));
+  $("#history-dialog").addEventListener("close", () => {
+    state.historyDeviceId = null;
+    state.deviceHistory = [];
+  });
 
   if (state.token) loadDevices().catch(() => {});
   else {

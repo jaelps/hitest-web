@@ -1,4 +1,5 @@
 import { lookup } from "node:dns/promises";
+import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { timingSafeEqual } from "node:crypto";
@@ -6,8 +7,11 @@ import { timingSafeEqual } from "node:crypto";
 const CATEGORIES = new Set(["machine_modules", "air_sensors", "online_dosers"]);
 const DEVICE_KEY = "hitest:web:devices";
 const EVENT_KEY = "hitest:web:events";
+const STATUS_KEY = "hitest:web:device-status";
+const DEVICE_HISTORY_KEY_PREFIX = "hitest:web:device-history:";
 const MAX_DEVICES = 100;
-const MAX_EVENTS = 100;
+const DEFAULT_EVENT_PAGE_SIZE = 50;
+const MAX_EVENT_PAGE_SIZE = 100;
 const DEVICE_TIMEOUT_MS = 4000;
 const STATUS_CONCURRENCY = 50;
 
@@ -51,15 +55,31 @@ function validateEndpoint(value) {
   try {
     endpoint = new URL(value);
   } catch {
-    throw new Error("Informe uma URL HTTPS válida para o dispositivo.");
+    throw new Error("Informe uma URL válida para o dispositivo.");
   }
-  if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password || (endpoint.port && endpoint.port !== "443")) {
-    throw new Error("O endpoint precisa usar HTTPS, sem credenciais ou porta personalizada.");
+  if (!["http:", "https:"].includes(endpoint.protocol) || endpoint.username || endpoint.password) {
+    throw new Error("Use HTTP ou HTTPS sem credenciais na URL.");
   }
-  const hostname = endpoint.hostname.toLowerCase();
-  if (!hostname.includes(".") || hostname === "localhost" || hostname.endsWith(".localhost")
-    || hostname.endsWith(".local") || hostname.endsWith(".internal") || isIP(hostname)) {
-    throw new Error("Use um domínio público de túnel/VPN com certificado HTTPS válido.");
+  const hostname = endpoint.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const addressFamily = isIP(hostname);
+  if (addressFamily) {
+    if (!isPublicAddress(hostname)) {
+      throw new Error("O IP do dispositivo precisa ser público e roteável pela internet.");
+    }
+    if (endpoint.port) {
+      throw new Error("Use a porta padrão do dispositivo: 80 para HTTP ou 443 para HTTPS.");
+    }
+    if (endpoint.protocol === "http:" && addressFamily !== 4) {
+      throw new Error("Para IP público IPv6, configure HTTPS com certificado válido.");
+    }
+  } else {
+    if (endpoint.protocol !== "https:" || (endpoint.port && endpoint.port !== "443")) {
+      throw new Error("Domínios precisam usar HTTPS na porta padrão 443.");
+    }
+    if (!hostname.includes(".") || hostname === "localhost" || hostname.endsWith(".localhost")
+      || hostname.endsWith(".local") || hostname.endsWith(".internal")) {
+      throw new Error("Use um domínio público com certificado HTTPS válido.");
+    }
   }
   endpoint.hash = "";
   return endpoint.toString().replace(/\/$/, "");
@@ -77,8 +97,8 @@ function isPublicAddress(address) {
       || (a === 192 && b === 0)
       || (a === 192 && b === 168)
       || (a === 198 && (b === 18 || b === 19))
-      || (a === 198 && b === 51)
-      || (a === 203 && b === 0)
+      || (a === 198 && b === 51 && octets[2] === 100)
+      || (a === 192 && b === 88 && octets[2] === 99)
       || (a === 203 && b === 0 && octets[2] === 113));
   }
   if (isIP(normalized) === 6) {
@@ -91,13 +111,19 @@ function isPublicAddress(address) {
 async function checkedDeviceUrl(endpoint, path) {
   const parsed = new URL(endpoint);
   let addresses;
-  try {
-    addresses = await lookup(parsed.hostname, { all: true, verbatim: true });
-  } catch {
-    throw new Error("Não foi possível resolver o domínio HTTPS do dispositivo.");
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
+  const family = isIP(hostname);
+  if (family) {
+    addresses = [{ address: hostname, family }];
+  } else {
+    try {
+      addresses = await lookup(hostname, { all: true, verbatim: true });
+    } catch {
+      throw new Error("Não foi possível resolver o domínio HTTPS do dispositivo.");
+    }
   }
   if (!addresses.length || addresses.some(({ address }) => !isPublicAddress(address))) {
-    throw new Error("O domínio do dispositivo precisa resolver apenas para endereços públicos.");
+    throw new Error("O dispositivo precisa usar um IP público ou domínio que resolva apenas para endereços públicos.");
   }
   return { url: new URL(path, `${endpoint.replace(/\/+$/, "")}/`), addresses };
 }
@@ -106,7 +132,8 @@ async function deviceRequest(device, path) {
   const { url, addresses } = await checkedDeviceUrl(device.endpoint, path);
   const address = addresses.find(({ family }) => family === 4) || addresses[0];
   return new Promise((resolve, reject) => {
-    const request = httpsRequest(url, {
+    const makeRequest = url.protocol === "https:" ? httpsRequest : httpRequest;
+    const request = makeRequest(url, {
       method: "GET",
       headers: { Accept: "application/json" },
       lookup: (_hostname, options, callback) => {
@@ -160,35 +187,107 @@ function validateDevices(input) {
 
 async function appendEvent(redis, event) {
   await redis.lpush(EVENT_KEY, JSON.stringify({ ...event, timestamp: new Date().toISOString() }));
-  await redis.ltrim(EVENT_KEY, 0, MAX_EVENTS - 1);
 }
 
 async function getDevices(redis) {
   return (await redis.get(DEVICE_KEY)) || [];
 }
 
-async function getStatus(devices) {
+async function getStatus(redis, devices, probeDevice = deviceRequest) {
+  const previousStatuses = await redis.hgetall(STATUS_KEY) || {};
+  const statusUpdates = {};
+  const historyWrites = [];
+  const transitions = [];
   const results = [];
   for (let offset = 0; offset < devices.length; offset += STATUS_CONCURRENCY) {
     const batch = devices.slice(offset, offset + STATUS_CONCURRENCY);
     results.push(...await Promise.all(batch.map(async (device) => {
+      const stored = previousStatuses[device.id];
+      const previous = typeof stored === "string" ? JSON.parse(stored) : stored;
+      const checkedAt = new Date().toISOString();
       try {
-        const response = await deviceRequest(device, "/heartbeat");
+        const response = await probeDevice(device, "/heartbeat");
         const payload = JSON.parse(response.body.toString("utf8"));
         if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("Resposta de heartbeat inválida.");
-        return {
+        const status = {
           ...device,
           status: "online",
           version: typeof payload.version === "string" ? payload.version : null,
           uptime: typeof payload.uptime === "string" || typeof payload.uptime === "number" ? String(payload.uptime) : null,
           device_status: typeof payload.status === "string" ? payload.status : null,
+          checkedAt,
+          lastSeen: checkedAt,
         };
+        historyWrites.push({
+          key: `${DEVICE_HISTORY_KEY_PREFIX}${device.id}`,
+          record: JSON.stringify({ checkedAt, status: "online", payload }),
+        });
+        statusUpdates[device.id] = JSON.stringify(status);
+        if (previous?.status !== "online") transitions.push({ type: "device_online", device: device.id, description: `${device.id} está online.` });
+        return status;
       } catch (error) {
-        return { ...device, status: "offline", version: null, uptime: null, device_status: null, error: error.message };
+        const status = {
+          ...device,
+          status: "offline",
+          version: previous?.version || null,
+          uptime: previous?.uptime || null,
+          device_status: previous?.device_status || null,
+          checkedAt,
+          lastSeen: previous?.lastSeen || null,
+          error: error.message,
+        };
+        historyWrites.push({
+          key: `${DEVICE_HISTORY_KEY_PREFIX}${device.id}`,
+          record: JSON.stringify({ checkedAt, status: "offline", error: error.message }),
+        });
+        statusUpdates[device.id] = JSON.stringify(status);
+        if (previous?.status !== "offline") transitions.push({ type: "device_offline", device: device.id, description: `${device.id} está offline.` });
+        return status;
       }
     })));
   }
+  if (Object.keys(statusUpdates).length) await redis.hset(STATUS_KEY, statusUpdates);
+  await Promise.all(historyWrites.map(({ key, record }) => redis.lpush(key, record)));
+  for (const transition of transitions) await appendEvent(redis, transition);
   return results;
+}
+
+function getPageParameters(query) {
+  const offset = Number(query?.offset ?? 0);
+  const requestedLimit = Number(query?.limit ?? DEFAULT_EVENT_PAGE_SIZE);
+  if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(requestedLimit) || requestedLimit < 1) {
+    const error = new Error("A paginação de eventos é inválida.");
+    error.status = 400;
+    throw error;
+  }
+  return { offset, limit: Math.min(requestedLimit, MAX_EVENT_PAGE_SIZE) };
+}
+
+async function getEventPage(redis, offset, limit) {
+  const [events, total] = await Promise.all([
+    redis.lrange(EVENT_KEY, offset, offset + limit - 1),
+    redis.llen(EVENT_KEY),
+  ]);
+  return {
+    events: events.map((event) => typeof event === "string" ? JSON.parse(event) : event),
+    total,
+    offset,
+    hasMore: offset + events.length < total,
+  };
+}
+
+async function getDeviceHistoryPage(redis, deviceId, offset, limit) {
+  const key = `${DEVICE_HISTORY_KEY_PREFIX}${deviceId}`;
+  const [records, total] = await Promise.all([
+    redis.lrange(key, offset, offset + limit - 1),
+    redis.llen(key),
+  ]);
+  return {
+    records: records.map((record) => typeof record === "string" ? JSON.parse(record) : record),
+    total,
+    offset,
+    hasMore: offset + records.length < total,
+  };
 }
 
 function decodePath(path) {
@@ -197,7 +296,16 @@ function decodePath(path) {
   return [];
 }
 
-export { decodePath, isPublicAddress, validateDevices };
+export {
+  appendEvent,
+  decodePath,
+  getDeviceHistoryPage,
+  getEventPage,
+  getPageParameters,
+  getStatus,
+  isPublicAddress,
+  validateDevices,
+};
 
 export default async function handler(request, response) {
   try {
@@ -219,16 +327,23 @@ export default async function handler(request, response) {
       return respond(response, 200, { devices });
     }
     if (path.length === 1 && path[0] === "status" && request.method === "GET") {
-      return respond(response, 200, { devices: await getStatus(await getDevices(redis)) });
+      return respond(response, 200, { devices: await getStatus(redis, await getDevices(redis)) });
     }
     if (path.length === 1 && path[0] === "events" && request.method === "GET") {
-      const events = await redis.lrange(EVENT_KEY, 0, MAX_EVENTS - 1);
-      return respond(response, 200, { events: events.map((event) => typeof event === "string" ? JSON.parse(event) : event) });
+      const { offset, limit } = getPageParameters(request.query);
+      return respond(response, 200, await getEventPage(redis, offset, limit));
+    }
+    if (path.length === 3 && path[0] === "devices" && path[2] === "history" && request.method === "GET") {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(path[1])) {
+        return respond(response, 400, { detail: "Identificador de dispositivo inválido." });
+      }
+      const { offset, limit } = getPageParameters(request.query);
+      return respond(response, 200, await getDeviceHistoryPage(redis, path[1], offset, limit));
     }
     if (path.length === 3 && path[0] === "devices" && path[2] === "heartbeat" && request.method === "GET") {
       const device = (await getDevices(redis)).find(({ id }) => id === path[1]);
       if (!device) return respond(response, 404, { detail: "Dispositivo não encontrado." });
-      return respond(response, 200, (await getStatus([device]))[0]);
+      return respond(response, 200, (await getStatus(redis, [device]))[0]);
     }
     if (path.length === 3 && path[0] === "devices" && path[2] === "command" && request.method === "POST") {
       const device = (await getDevices(redis)).find(({ id }) => id === path[1]);
