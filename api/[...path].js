@@ -1,0 +1,255 @@
+import { lookup } from "node:dns/promises";
+import { request as httpsRequest } from "node:https";
+import { isIP } from "node:net";
+import { timingSafeEqual } from "node:crypto";
+
+const CATEGORIES = new Set(["machine_modules", "air_sensors", "online_dosers"]);
+const DEVICE_KEY = "hitest:web:devices";
+const EVENT_KEY = "hitest:web:events";
+const MAX_DEVICES = 100;
+const MAX_EVENTS = 100;
+const DEVICE_TIMEOUT_MS = 4000;
+const STATUS_CONCURRENCY = 50;
+
+function respond(response, status, body) {
+  response.status(status).json(body);
+}
+
+async function getRedis() {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) {
+    const error = new Error("Configure o armazenamento Redis pela integração Upstash na Vercel.");
+    error.status = 503;
+    throw error;
+  }
+  const { Redis } = await import("@upstash/redis");
+  return new Redis({ url, token });
+}
+
+function authorize(request) {
+  const expected = process.env.HITEST_API_TOKEN || "";
+  const supplied = request.headers.authorization?.startsWith("Bearer ")
+    ? request.headers.authorization.slice(7)
+    : "";
+  if (expected.length < 32 || expected.startsWith("replace-")) {
+    const error = new Error("O token HITEST_API_TOKEN precisa ter pelo menos 32 caracteres.");
+    error.status = 503;
+    throw error;
+  }
+  const expectedBuffer = Buffer.from(expected);
+  const suppliedBuffer = Buffer.from(supplied);
+  if (expectedBuffer.length !== suppliedBuffer.length || !timingSafeEqual(expectedBuffer, suppliedBuffer)) {
+    const error = new Error("Token de acesso inválido.");
+    error.status = 401;
+    throw error;
+  }
+}
+
+function validateEndpoint(value) {
+  let endpoint;
+  try {
+    endpoint = new URL(value);
+  } catch {
+    throw new Error("Informe uma URL HTTPS válida para o dispositivo.");
+  }
+  if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password || (endpoint.port && endpoint.port !== "443")) {
+    throw new Error("O endpoint precisa usar HTTPS, sem credenciais ou porta personalizada.");
+  }
+  const hostname = endpoint.hostname.toLowerCase();
+  if (!hostname.includes(".") || hostname === "localhost" || hostname.endsWith(".localhost")
+    || hostname.endsWith(".local") || hostname.endsWith(".internal") || isIP(hostname)) {
+    throw new Error("Use um domínio público de túnel/VPN com certificado HTTPS válido.");
+  }
+  endpoint.hash = "";
+  return endpoint.toString().replace(/\/$/, "");
+}
+
+function isPublicAddress(address) {
+  const normalized = address.toLowerCase().split("%")[0];
+  if (isIP(normalized) === 4) {
+    const octets = normalized.split(".").map(Number);
+    const [a, b] = octets;
+    return !(a === 0 || a === 10 || a === 127 || a >= 224
+      || (a === 100 && b >= 64 && b <= 127)
+      || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31)
+      || (a === 192 && b === 0)
+      || (a === 192 && b === 168)
+      || (a === 198 && (b === 18 || b === 19))
+      || (a === 198 && b === 51)
+      || (a === 203 && b === 0)
+      || (a === 203 && b === 0 && octets[2] === 113));
+  }
+  if (isIP(normalized) === 6) {
+    const first = Number.parseInt(normalized.split(":")[0] || "0", 16);
+    return (first & 0xe000) === 0x2000 && !normalized.startsWith("2001:db8:");
+  }
+  return false;
+}
+
+async function checkedDeviceUrl(endpoint, path) {
+  const parsed = new URL(endpoint);
+  let addresses;
+  try {
+    addresses = await lookup(parsed.hostname, { all: true, verbatim: true });
+  } catch {
+    throw new Error("Não foi possível resolver o domínio HTTPS do dispositivo.");
+  }
+  if (!addresses.length || addresses.some(({ address }) => !isPublicAddress(address))) {
+    throw new Error("O domínio do dispositivo precisa resolver apenas para endereços públicos.");
+  }
+  return { url: new URL(path, `${endpoint.replace(/\/+$/, "")}/`), addresses };
+}
+
+async function deviceRequest(device, path) {
+  const { url, addresses } = await checkedDeviceUrl(device.endpoint, path);
+  const address = addresses.find(({ family }) => family === 4) || addresses[0];
+  return new Promise((resolve, reject) => {
+    const request = httpsRequest(url, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      lookup: (_hostname, options, callback) => {
+        if (options.all) callback(null, addresses);
+        else callback(null, address.address, address.family);
+      },
+    }, (response) => {
+      const chunks = [];
+      let size = 0;
+      response.on("data", (chunk) => {
+        size += chunk.length;
+        if (size > 65536) {
+          request.destroy(new Error("A resposta do dispositivo excede o limite permitido."));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.on("end", () => {
+        if (response.statusCode >= 300 && response.statusCode < 400) {
+          reject(new Error("Redirecionamentos de dispositivos não são permitidos."));
+        } else if (response.statusCode < 200 || response.statusCode >= 300) {
+          reject(new Error(`O dispositivo respondeu HTTP ${response.statusCode}.`));
+        } else {
+          resolve({ status: response.statusCode, body: Buffer.concat(chunks) });
+        }
+      });
+      response.on("error", reject);
+    });
+    request.setTimeout(DEVICE_TIMEOUT_MS, () => request.destroy(new Error("Tempo limite ao consultar dispositivo.")));
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+function validateDevices(input) {
+  if (!Array.isArray(input) || input.length > MAX_DEVICES) {
+    throw new Error(`A configuração deve ser uma lista com até ${MAX_DEVICES} dispositivos.`);
+  }
+  const seen = new Set();
+  return input.map((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Dispositivo inválido.");
+    const id = typeof value.id === "string" ? value.id.trim() : "";
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(id) || seen.has(id)) {
+      throw new Error("Os identificadores devem ser únicos e conter apenas letras, números, ponto, hífen ou sublinhado.");
+    }
+    if (!CATEGORIES.has(value.category)) throw new Error(`Categoria inválida para ${id}.`);
+    seen.add(id);
+    return { id, category: value.category, endpoint: validateEndpoint(value.endpoint) };
+  });
+}
+
+async function appendEvent(redis, event) {
+  await redis.lpush(EVENT_KEY, JSON.stringify({ ...event, timestamp: new Date().toISOString() }));
+  await redis.ltrim(EVENT_KEY, 0, MAX_EVENTS - 1);
+}
+
+async function getDevices(redis) {
+  return (await redis.get(DEVICE_KEY)) || [];
+}
+
+async function getStatus(devices) {
+  const results = [];
+  for (let offset = 0; offset < devices.length; offset += STATUS_CONCURRENCY) {
+    const batch = devices.slice(offset, offset + STATUS_CONCURRENCY);
+    results.push(...await Promise.all(batch.map(async (device) => {
+      try {
+        const response = await deviceRequest(device, "/heartbeat");
+        const payload = JSON.parse(response.body.toString("utf8"));
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("Resposta de heartbeat inválida.");
+        return {
+          ...device,
+          status: "online",
+          version: typeof payload.version === "string" ? payload.version : null,
+          uptime: typeof payload.uptime === "string" || typeof payload.uptime === "number" ? String(payload.uptime) : null,
+          device_status: typeof payload.status === "string" ? payload.status : null,
+        };
+      } catch (error) {
+        return { ...device, status: "offline", version: null, uptime: null, device_status: null, error: error.message };
+      }
+    })));
+  }
+  return results;
+}
+
+function decodePath(path) {
+  if (Array.isArray(path)) return path.map((part) => decodeURIComponent(part));
+  if (typeof path === "string") return path.split("/").filter(Boolean).map((part) => decodeURIComponent(part));
+  return [];
+}
+
+export { decodePath, isPublicAddress, validateDevices };
+
+export default async function handler(request, response) {
+  try {
+    authorize(request);
+    const redis = await getRedis();
+    const path = decodePath(request.query.path);
+    if (path.length === 1 && path[0] === "devices" && request.method === "GET") {
+      return respond(response, 200, { devices: await getDevices(redis) });
+    }
+    if (path.length === 1 && path[0] === "devices" && request.method === "PUT") {
+      let devices;
+      try {
+        devices = validateDevices(request.body?.devices);
+      } catch (error) {
+        return respond(response, 400, { detail: error.message });
+      }
+      await redis.set(DEVICE_KEY, devices);
+      await appendEvent(redis, { type: "configuration_updated", description: "Lista de dispositivos atualizada." });
+      return respond(response, 200, { devices });
+    }
+    if (path.length === 1 && path[0] === "status" && request.method === "GET") {
+      return respond(response, 200, { devices: await getStatus(await getDevices(redis)) });
+    }
+    if (path.length === 1 && path[0] === "events" && request.method === "GET") {
+      const events = await redis.lrange(EVENT_KEY, 0, MAX_EVENTS - 1);
+      return respond(response, 200, { events: events.map((event) => typeof event === "string" ? JSON.parse(event) : event) });
+    }
+    if (path.length === 3 && path[0] === "devices" && path[2] === "heartbeat" && request.method === "GET") {
+      const device = (await getDevices(redis)).find(({ id }) => id === path[1]);
+      if (!device) return respond(response, 404, { detail: "Dispositivo não encontrado." });
+      return respond(response, 200, (await getStatus([device]))[0]);
+    }
+    if (path.length === 3 && path[0] === "devices" && path[2] === "command" && request.method === "POST") {
+      const device = (await getDevices(redis)).find(({ id }) => id === path[1]);
+      if (!device) return respond(response, 404, { detail: "Dispositivo não encontrado." });
+      if (device.category === "air_sensors") return respond(response, 400, { detail: "Esta categoria não oferece o comando /lb." });
+      try {
+        const result = await deviceRequest(device, "/lb");
+        await appendEvent(redis, { type: "command_sent", device: device.id, description: `Comando /lb enviado para ${device.id}.` });
+        return respond(response, 200, { device: device.id, status: "command_sent", http_status: result.status });
+      } catch (error) {
+        await appendEvent(redis, { type: "command_failed", device: device.id, description: `Falha no comando para ${device.id}: ${error.message}` });
+        return respond(response, 502, { detail: error.message });
+      }
+    }
+    if (request.method !== "GET" && request.method !== "PUT" && request.method !== "POST") {
+      response.setHeader("Allow", "GET, PUT, POST");
+      return respond(response, 405, { detail: "Método não permitido." });
+    }
+    return respond(response, 404, { detail: "Rota não encontrada." });
+  } catch (error) {
+    const status = Number.isInteger(error.status) ? error.status : 500;
+    return respond(response, status, { detail: status === 500 ? "Falha interna da API HITEST." : error.message });
+  }
+}

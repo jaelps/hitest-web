@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f4f7f8">
+    <title>HITEST | Painel de dispositivos</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="/" aria-label="HITEST início">
+          <span class="brand-mark">H<span>.</span></span>
+          <span class="brand-name">HITEST<small>DEVICE MONITOR</small></span>
+        </a>
+        <div class="sidebar-label">TELAS</div>
+        <nav class="main-nav" aria-label="Telas principais">
+          <button class="nav-item active" data-screen="overview"><span class="nav-icon">⌂</span>Visão geral</button>
+          <button class="nav-item" data-screen="devices"><span class="nav-icon">▦</span>Dispositivos</button>
+          <button class="nav-item" data-screen="activity"><span class="nav-icon">◷</span>Atividade</button>
+          <button class="nav-item" data-screen="settings"><span class="nav-icon">⚙</span>Configurações</button>
+        </nav>
+        <div class="sidebar-label category-label">CATEGORIAS</div>
+        <nav class="category-nav" aria-label="Categorias de dispositivos">
+          <button class="nav-item active" data-category="all"><span class="nav-icon">⊞</span>Todas<span class="nav-count" id="all-count">0</span></button>
+          <button class="nav-item" data-category="machine_modules"><span class="nav-icon">▦</span>Módulos de máquina<span class="nav-count" id="machine-count">0</span></button>
+          <button class="nav-item" data-category="air_sensors"><span class="nav-icon">◉</span>Sensores de ar<span class="nav-count" id="sensor-count">0</span></button>
+          <button class="nav-item" data-category="online_dosers"><span class="nav-icon">◌</span>Dosadores online<span class="nav-count" id="doser-count">0</span></button>
+        </nav>
+        <div class="sidebar-bottom">
+          <div class="gateway-card">
+            <div class="gateway-card-heading"><span class="connection-dot" id="connection-dot"></span>API Vercel</div>
+            <p id="gateway-caption">Configure a conexão para começar.</p>
+            <button class="text-button" id="open-settings">Configurar conexão <span>↗</span></button>
+          </div>
+          <div class="sidebar-foot">HITEST WEB <span>•</span> VERSÃO 1.0</div>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div class="breadcrumb"><span>HITEST</span><span class="crumb-slash">/</span><strong id="breadcrumb-current">Visão geral</strong></div>
+          <div class="topbar-actions">
+            <div class="last-update" id="last-update">Aguardando conexão</div>
+            <button class="icon-button" id="refresh-button" aria-label="Atualizar dispositivos" title="Atualizar">↻</button>
+            <button class="button button-primary add-button" id="add-device">＋ <span>Adicionar dispositivo</span></button>
+          </div>
+        </header>
+
+        <section class="page-heading screen-dashboard">
+          <div>
+            <div class="eyebrow">CENTRAL DE OPERAÇÕES</div>
+            <h1 id="page-title">Visão geral</h1>
+            <p class="page-description">Acompanhe seus dispositivos HITEST em tempo real.</p>
+          </div>
+          <div class="auto-refresh"><span class="pulse-dot"></span> ATUALIZAÇÃO AUTOMÁTICA <b>15s</b></div>
+        </section>
+
+        <section class="metrics-grid screen-dashboard" aria-label="Resumo dos dispositivos">
+          <article class="metric-card metric-total"><div class="metric-top"><span>Total de dispositivos</span><span class="metric-icon">▦</span></div><strong id="total-metric">0</strong><small>em todas as categorias</small></article>
+          <article class="metric-card"><div class="metric-top"><span>Online</span><span class="metric-status online"></span></div><strong id="online-metric">0</strong><small>dispositivos respondendo</small></article>
+          <article class="metric-card"><div class="metric-top"><span>Offline</span><span class="metric-status offline"></span></div><strong id="offline-metric">0</strong><small>precisam de atenção</small></article>
+          <article class="metric-card"><div class="metric-top"><span>Disponibilidade</span><span class="metric-icon availability-icon">↗</span></div><strong id="availability-metric">—<span class="percent">%</span></strong><small>dos dispositivos online</small></article>
+        </section>
+
+        <section class="devices-section screen-dashboard">
+          <div class="section-toolbar">
+            <div><h2>Dispositivos</h2><p id="device-subtitle">Estado atual dos equipamentos conectados</p></div>
+            <div class="toolbar-actions">
+              <label class="search-box"><span>⌕</span><input id="search-input" type="search" placeholder="Buscar dispositivo..." aria-label="Buscar dispositivo"></label>
+              <button class="button button-quiet" id="export-button" title="Exportar configuração">⇧ <span>Exportar</span></button>
+              <label class="button button-quiet import-button" for="import-file">⇩ <span>Importar</span><input id="import-file" type="file" accept="application/json,.json" hidden></label>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>DISPOSITIVO</th><th>CATEGORIA</th><th>ENDPOINT HTTPS</th><th>STATUS</th><th>VERSÃO</th><th>TEMPO ATIVO</th><th>AÇÕES</th></tr></thead>
+              <tbody id="device-rows"></tbody>
+            </table>
+            <div class="empty-state" id="empty-state">
+              <div class="empty-illustration">⌁</div>
+              <h3>Nenhum dispositivo por aqui</h3>
+              <p>Adicione um dispositivo com URL HTTPS segura para começar o monitoramento.</p>
+              <button class="button button-primary" id="empty-add-device">＋ Adicionar dispositivo</button>
+            </div>
+          </div>
+          <div class="table-footer"><span id="result-count">0 dispositivos</span><span>Monitoramento via API Vercel <span class="footer-signal">●</span></span></div>
+        </section>
+        <section class="screen-page" id="activity-screen" hidden>
+          <div class="page-heading"><div><div class="eyebrow">REGISTRO DO SISTEMA</div><h1>Atividade</h1><p class="page-description">Comandos e alterações recentes desta instalação.</p></div></div>
+          <div class="activity-card">
+            <div class="screen-card-heading"><div><h2>Eventos recentes</h2><p>Até 100 eventos, armazenados no Redis conectado à Vercel.</p></div><button class="button button-quiet" id="refresh-events">↻ Atualizar</button></div>
+            <div id="activity-list" class="activity-list"></div>
+          </div>
+        </section>
+        <section class="screen-page" id="settings-screen" hidden>
+          <div class="page-heading"><div><div class="eyebrow">PREFERÊNCIAS E ACESSO</div><h1>Configurações</h1><p class="page-description">Gerencie a conexão protegida e o acesso aos seus dispositivos.</p></div></div>
+          <div class="settings-grid">
+            <article class="settings-card">
+              <div class="screen-card-heading"><div><h2>Acesso ao painel</h2><p>Token de acesso definido no ambiente da Vercel.</p></div><span class="settings-icon">⌑</span></div>
+              <div class="settings-detail"><span>Estado da sessão</span><strong id="settings-auth-state">Não conectado</strong></div>
+              <div class="settings-detail"><span>Armazenamento</span><strong>Upstash Redis</strong></div>
+              <button class="button button-primary" id="settings-connect">Configurar token</button>
+            </article>
+            <article class="settings-card">
+              <div class="screen-card-heading"><div><h2>Conectividade</h2><p>Integração dos dispositivos com o backend Vercel.</p></div><span class="settings-icon">⌁</span></div>
+              <div class="settings-detail"><span>API</span><strong id="settings-api-state">Aguardando autenticação</strong></div>
+              <div class="settings-detail"><span>Atualização automática</span><strong>A cada 15 segundos</strong></div>
+              <p class="settings-warning">O backend Vercel não alcança IPs privados da sua rede. Para monitorar equipamentos, cada dispositivo precisa estar acessível por uma URL HTTPS pública protegida por VPN ou túnel seguro.</p>
+            </article>
+          </div>
+          <div class="security-banner"><span>!</span><div><strong>Proteja a rede e as credenciais</strong><p>Configure HITEST_API_TOKEN e as credenciais Redis somente nas variáveis de ambiente da Vercel. Nunca publique o token do painel nem URLs que funcionem como segredos.</p></div></div>
+        </section>
+        <footer class="page-footer"><span>HITEST WEB</span><span>Monitoramento seguro de equipamentos</span><button class="text-button" id="footer-settings">Configurações de acesso ↗</button></footer>
+      </main>
+    </div>
+
+    <dialog id="settings-dialog" class="modal">
+      <form id="settings-form" method="dialog">
+        <div class="modal-heading"><div>        <div class="eyebrow">CONEXÃO SEGURA</div><h2>Acesso à API</h2></div><button type="button" class="modal-close" data-close="settings-dialog" aria-label="Fechar">×</button></div>
+        <p class="modal-description">Informe o token HITEST_API_TOKEN configurado nas variáveis de ambiente da Vercel. O token fica somente nesta sessão do navegador.</p>
+        <label class="field-label" for="gateway-token">Token da API</label>
+        <input class="text-input" id="gateway-token" type="password" placeholder="Cole o token HITEST_API_TOKEN da Vercel" autocomplete="off" required>
+        <div class="modal-note">O frontend chama a API na mesma origem. O token não é incluído no bundle do site nem enviado para armazenamento persistente do navegador.</div>
+        <div class="form-error" id="settings-error" role="alert"></div>
+        <div class="modal-actions"><button class="button button-quiet" type="button" id="clear-token">Limpar token</button><button class="button button-primary" type="submit">Conectar</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="device-dialog" class="modal">
+      <form id="device-form" method="dialog">
+        <div class="modal-heading"><div><div class="eyebrow">CONFIGURAÇÃO</div><h2 id="device-dialog-title">Adicionar dispositivo</h2></div><button type="button" class="modal-close" data-close="device-dialog" aria-label="Fechar">×</button></div>
+        <input type="hidden" id="device-original-id">
+        <label class="field-label" for="device-id">Identificador</label>
+        <input class="text-input" id="device-id" placeholder="Ex.: modulo-01" maxlength="64" required>
+        <label class="field-label" for="device-category">Categoria</label>
+        <select class="text-input" id="device-category" required>
+          <option value="machine_modules">Módulo de máquina</option>
+          <option value="air_sensors">Sensor de ar</option>
+          <option value="online_dosers">Dosador online</option>
+        </select>
+        <label class="field-label" for="device-endpoint">URL HTTPS segura do dispositivo</label>
+        <input class="text-input" id="device-endpoint" type="url" placeholder="https://equipamento.seu-tunel-seguro.com" required>
+        <div class="modal-note">Vercel não alcança IPs privados. Use um domínio HTTPS de VPN/túnel autenticado, com certificado válido e acesso restrito. A configuração é persistida no Redis vinculado à Vercel.</div>
+        <div class="form-error" id="device-error" role="alert"></div>
+        <div class="modal-actions"><button class="button button-quiet" type="button" data-close="device-dialog">Cancelar</button><button class="button button-primary" type="submit">Salvar dispositivo</button></div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
