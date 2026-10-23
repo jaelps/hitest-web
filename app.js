@@ -93,7 +93,7 @@
       return `<tr>
         <td data-label="Dispositivo"><div class="device-name"><span class="device-avatar">${categoryIcons[device.category]}</span><span>${escapeHtml(device.id)}<span class="device-id">HITEST DEVICE</span></span></div></td>
         <td data-label="Categoria"><span class="category-tag">${categoryNames[device.category]}</span></td>
-        <td data-label="Endpoint HTTPS"><span class="ip-address">${escapeHtml(endpointHost)}</span></td>
+        <td data-label="Endereço público"><span class="ip-address">${escapeHtml(endpointHost)}</span></td>
         <td data-label="Status"><span class="status-pill ${status}">${statusLabel}</span></td>
         <td data-label="Última resposta"><span class="uptime">${escapeHtml(lastSeen)}</span></td>
         <td data-label="Versão"><span class="device-version">${escapeHtml(device.version || "—")}</span></td>

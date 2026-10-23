@@ -1,4 +1,5 @@
 import { lookup } from "node:dns/promises";
+import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { timingSafeEqual } from "node:crypto";
@@ -54,15 +55,31 @@ function validateEndpoint(value) {
   try {
     endpoint = new URL(value);
   } catch {
-    throw new Error("Informe uma URL HTTPS válida para o dispositivo.");
+    throw new Error("Informe uma URL válida para o dispositivo.");
   }
-  if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password || (endpoint.port && endpoint.port !== "443")) {
-    throw new Error("O endpoint precisa usar HTTPS, sem credenciais ou porta personalizada.");
+  if (!["http:", "https:"].includes(endpoint.protocol) || endpoint.username || endpoint.password) {
+    throw new Error("Use HTTP ou HTTPS sem credenciais na URL.");
   }
-  const hostname = endpoint.hostname.toLowerCase();
-  if (!hostname.includes(".") || hostname === "localhost" || hostname.endsWith(".localhost")
-    || hostname.endsWith(".local") || hostname.endsWith(".internal") || isIP(hostname)) {
-    throw new Error("Use um domínio público de túnel/VPN com certificado HTTPS válido.");
+  const hostname = endpoint.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const addressFamily = isIP(hostname);
+  if (addressFamily) {
+    if (!isPublicAddress(hostname)) {
+      throw new Error("O IP do dispositivo precisa ser público e roteável pela internet.");
+    }
+    if (endpoint.port) {
+      throw new Error("Use a porta padrão do dispositivo: 80 para HTTP ou 443 para HTTPS.");
+    }
+    if (endpoint.protocol === "http:" && addressFamily !== 4) {
+      throw new Error("Para IP público IPv6, configure HTTPS com certificado válido.");
+    }
+  } else {
+    if (endpoint.protocol !== "https:" || (endpoint.port && endpoint.port !== "443")) {
+      throw new Error("Domínios precisam usar HTTPS na porta padrão 443.");
+    }
+    if (!hostname.includes(".") || hostname === "localhost" || hostname.endsWith(".localhost")
+      || hostname.endsWith(".local") || hostname.endsWith(".internal")) {
+      throw new Error("Use um domínio público com certificado HTTPS válido.");
+    }
   }
   endpoint.hash = "";
   return endpoint.toString().replace(/\/$/, "");
@@ -81,6 +98,7 @@ function isPublicAddress(address) {
       || (a === 192 && b === 168)
       || (a === 198 && (b === 18 || b === 19))
       || (a === 198 && b === 51 && octets[2] === 100)
+      || (a === 192 && b === 88 && octets[2] === 99)
       || (a === 203 && b === 0 && octets[2] === 113));
   }
   if (isIP(normalized) === 6) {
@@ -93,13 +111,19 @@ function isPublicAddress(address) {
 async function checkedDeviceUrl(endpoint, path) {
   const parsed = new URL(endpoint);
   let addresses;
-  try {
-    addresses = await lookup(parsed.hostname, { all: true, verbatim: true });
-  } catch {
-    throw new Error("Não foi possível resolver o domínio HTTPS do dispositivo.");
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
+  const family = isIP(hostname);
+  if (family) {
+    addresses = [{ address: hostname, family }];
+  } else {
+    try {
+      addresses = await lookup(hostname, { all: true, verbatim: true });
+    } catch {
+      throw new Error("Não foi possível resolver o domínio HTTPS do dispositivo.");
+    }
   }
   if (!addresses.length || addresses.some(({ address }) => !isPublicAddress(address))) {
-    throw new Error("O domínio do dispositivo precisa resolver apenas para endereços públicos.");
+    throw new Error("O dispositivo precisa usar um IP público ou domínio que resolva apenas para endereços públicos.");
   }
   return { url: new URL(path, `${endpoint.replace(/\/+$/, "")}/`), addresses };
 }
@@ -108,7 +132,8 @@ async function deviceRequest(device, path) {
   const { url, addresses } = await checkedDeviceUrl(device.endpoint, path);
   const address = addresses.find(({ family }) => family === 4) || addresses[0];
   return new Promise((resolve, reject) => {
-    const request = httpsRequest(url, {
+    const makeRequest = url.protocol === "https:" ? httpsRequest : httpRequest;
+    const request = makeRequest(url, {
       method: "GET",
       headers: { Accept: "application/json" },
       lookup: (_hostname, options, callback) => {

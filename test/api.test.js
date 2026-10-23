@@ -18,10 +18,26 @@ const validDevice = {
   endpoint: "https://module.example-tunnel.com",
 };
 
-test("accepts only HTTPS tunnel URLs and supported categories", () => {
+test("accepts public device IPs and HTTPS tunnel URLs with supported categories", () => {
   assert.deepEqual(validateDevices([validDevice]), [validDevice]);
-  assert.throws(() => validateDevices([{ ...validDevice, endpoint: "http://module.example.com" }]), /HTTPS/);
-  assert.throws(() => validateDevices([{ ...validDevice, endpoint: "https://127.0.0.1" }]), /domínio público/);
+  assert.equal(
+    validateDevices([{ ...validDevice, endpoint: "http://1.1.1.1" }])[0].endpoint,
+    "http://1.1.1.1",
+  );
+  assert.equal(
+    validateDevices([{ ...validDevice, endpoint: "https://1.1.1.1" }])[0].endpoint,
+    "https://1.1.1.1",
+  );
+  assert.equal(
+    validateDevices([{ ...validDevice, endpoint: "https://[2606:4700:4700::1111]" }])[0].endpoint,
+    "https://[2606:4700:4700::1111]",
+  );
+  assert.throws(() => validateDevices([{ ...validDevice, endpoint: "http://module.example.com" }]), /Domínios precisam usar HTTPS/);
+  assert.throws(() => validateDevices([{ ...validDevice, endpoint: "https://127.0.0.1" }]), /IP do dispositivo precisa ser público/);
+  assert.throws(() => validateDevices([{ ...validDevice, endpoint: "http://192.168.1.5" }]), /IP do dispositivo precisa ser público/);
+  assert.throws(() => validateDevices([{ ...validDevice, endpoint: "https://192.0.2.1" }]), /IP do dispositivo precisa ser público/);
+  assert.throws(() => validateDevices([{ ...validDevice, endpoint: "http://[2606:4700:4700::1111]" }]), /IPv6/);
+  assert.throws(() => validateDevices([{ ...validDevice, endpoint: "http://1.1.1.1:8080" }]), /porta padrão/);
   assert.throws(() => validateDevices([{ ...validDevice, category: "unknown" }]), /Categoria inválida/);
 });
 
@@ -67,7 +83,7 @@ test("provides responsive breakpoints and mobile-friendly device rows", async ()
   assert.match(stylesheet, /\[hidden\]\s*\{\s*display:\s*none\s*!important/);
   assert.match(stylesheet, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(stylesheet, /content: attr\(data-label\)/);
-  assert.match(app, /data-label="Endpoint HTTPS"/);
+  assert.match(app, /data-label="Endereço público"/);
 });
 
 test("keeps activity events without automatic trimming and paginates the full history", async () => {

@@ -84,7 +84,7 @@
             <div class="empty-state" id="empty-state">
               <div class="empty-illustration">⌁</div>
               <h3>Nenhum dispositivo por aqui</h3>
-              <p>Adicione um dispositivo com URL HTTPS segura para começar o monitoramento.</p>
+              <p>Adicione um dispositivo com endereço público acessível pela internet para começar o monitoramento.</p>
               <button class="button button-primary" id="empty-add-device">＋ Adicionar dispositivo</button>
             </div>
           </div>
@@ -111,7 +111,7 @@
               <div class="screen-card-heading"><div><h2>Conectividade</h2><p>Integração dos dispositivos com o backend Vercel.</p></div><span class="settings-icon">⌁</span></div>
               <div class="settings-detail"><span>API</span><strong id="settings-api-state">Aguardando autenticação</strong></div>
               <div class="settings-detail"><span>Atualização automática</span><strong>A cada 15 segundos</strong></div>
-              <p class="settings-warning">O backend Vercel não alcança IPs privados da sua rede. Para monitorar equipamentos, cada dispositivo precisa estar acessível por uma URL HTTPS pública protegida por VPN ou túnel seguro.</p>
+              <p class="settings-warning">Não é necessário instalar programas nas máquinas. A Vercel acessa diretamente o IP público do equipamento; o endereço precisa estar acessível pela internet nas portas 80 (HTTP IPv4) ou 443 (HTTPS). IPs privados são bloqueados.</p>
             </article>
           </div>
           <div class="security-banner"><span>!</span><div><strong>Proteja a rede e as credenciais</strong><p>Configure HITEST_API_TOKEN e as credenciais Redis somente nas variáveis de ambiente da Vercel. Nunca publique o token do painel nem URLs que funcionem como segredos.</p></div></div>
@@ -144,9 +144,9 @@
           <option value="air_sensors">Sensor de ar</option>
           <option value="online_dosers">Dosador online</option>
         </select>
-        <label class="field-label" for="device-endpoint">URL HTTPS segura do dispositivo</label>
-        <input class="text-input" id="device-endpoint" type="url" placeholder="https://equipamento.seu-tunel-seguro.com" required>
-        <div class="modal-note">Os comandos são encaminhados ao IP do dispositivo pela VPN/túnel. Cadastre aqui a URL HTTPS autenticada que encaminha as chamadas ao IP na rede local; a Vercel não alcança IPs privados diretamente. A configuração é persistida no Redis vinculado à Vercel.</div>
+        <label class="field-label" for="device-endpoint">Endereço público do dispositivo</label>
+        <input class="text-input" id="device-endpoint" type="url" placeholder="http://IP-PUBLICO-DO-EQUIPAMENTO" required>
+        <div class="modal-note">Não é necessário instalar programas nem manter um servidor local: a API na Vercel chama diretamente o IP público. Aceitamos HTTP em IPv4 público (porta 80) ou HTTPS em IP público IPv4/IPv6 (porta 443); domínios devem usar HTTPS. IPs privados e portas personalizadas são bloqueados. HTTP não criptografa comandos: prefira HTTPS. O IP e a porta precisam estar acessíveis da internet, com firewall configurado. A lista fica salva no Redis.</div>
         <div class="form-error" id="device-error" role="alert"></div>
         <div class="modal-actions"><button class="button button-quiet" type="button" data-close="device-dialog">Cancelar</button><button class="button button-primary" type="submit">Salvar dispositivo</button></div>
       </form>
