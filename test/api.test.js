@@ -47,3 +47,15 @@ test("provides the four requested screens and never asks for a private LAN IP", 
   assert.match(page, /device-endpoint/);
   assert.doesNotMatch(page, /device-ip|gateway-url/);
 });
+
+test("provides responsive breakpoints and mobile-friendly device rows", async () => {
+  const stylesheet = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  const app = await readFile(new URL("../app.js", import.meta.url), "utf8");
+  for (const breakpoint of ["1100px", "760px", "560px", "390px"]) {
+    assert.ok(stylesheet.includes(`max-width: ${breakpoint}`), `missing ${breakpoint} responsive breakpoint`);
+  }
+  assert.match(stylesheet, /prefers-reduced-motion/);
+  assert.match(stylesheet, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(stylesheet, /content: attr\(data-label\)/);
+  assert.match(app, /data-label="Endpoint HTTPS"/);
+});

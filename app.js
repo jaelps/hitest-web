@@ -78,13 +78,13 @@
       let endpointHost = "—";
       try { endpointHost = new URL(device.endpoint).host; } catch { /* Invalid imported data is rejected by the API. */ }
       return `<tr>
-        <td><div class="device-name"><span class="device-avatar">${categoryIcons[device.category]}</span><span>${escapeHtml(device.id)}<span class="device-id">HITEST DEVICE</span></span></div></td>
-        <td><span class="category-tag">${categoryNames[device.category]}</span></td>
-        <td><span class="ip-address">${escapeHtml(endpointHost)}</span></td>
-        <td><span class="status-pill ${status}">${statusLabel}</span></td>
-        <td><span class="device-version">${escapeHtml(device.version || "—")}</span></td>
-        <td><span class="uptime">${escapeHtml(device.uptime || "—")}</span></td>
-        <td><div class="row-actions">
+        <td data-label="Dispositivo"><div class="device-name"><span class="device-avatar">${categoryIcons[device.category]}</span><span>${escapeHtml(device.id)}<span class="device-id">HITEST DEVICE</span></span></div></td>
+        <td data-label="Categoria"><span class="category-tag">${categoryNames[device.category]}</span></td>
+        <td data-label="Endpoint HTTPS"><span class="ip-address">${escapeHtml(endpointHost)}</span></td>
+        <td data-label="Status"><span class="status-pill ${status}">${statusLabel}</span></td>
+        <td data-label="Versão"><span class="device-version">${escapeHtml(device.version || "—")}</span></td>
+        <td data-label="Tempo ativo"><span class="uptime">${escapeHtml(device.uptime || "—")}</span></td>
+        <td data-label="Ações"><div class="row-actions">
           ${canCommand ? `<button class="row-action command" data-action="command" data-id="${escapeHtml(device.id)}" title="Executar ação /lb" aria-label="Executar ação em ${escapeHtml(device.id)}">▶</button>` : ""}
           <button class="row-action" data-action="edit" data-id="${escapeHtml(device.id)}" title="Editar dispositivo" aria-label="Editar ${escapeHtml(device.id)}">✎</button>
           <button class="row-action delete" data-action="delete" data-id="${escapeHtml(device.id)}" title="Remover dispositivo" aria-label="Remover ${escapeHtml(device.id)}">×</button>

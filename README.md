@@ -11,6 +11,10 @@ O repositório começa sem dispositivos nem endereços privados. Cada dispositiv
 - **Atividade:** últimos 100 comandos e alterações de configuração.
 - **Configurações:** estado de autenticação, Redis e orientação de conectividade segura.
 
+## Layout adaptável
+
+A interface se reorganiza para telas grandes, tablets e celulares: o menu lateral vira navegação horizontal em telas estreitas, os indicadores e configurações passam para colunas menores e a tabela completa vira cartões legíveis no celular. Os dados longos também quebram linha para evitar rolagem horizontal da página.
+
 ## Executar localmente
 
 Requisitos: Node.js 20+, npm e a CLI da Vercel (`npm install --global vercel`).
