@@ -15,7 +15,7 @@ Cada verificação periódica dos dispositivos remotos gera um registro permanen
 ## Telas
 
 - **Visão geral:** contagem, disponibilidade, estado dos equipamentos e atualização a cada 15 segundos.
-- **Dispositivos:** cadastro, edição, remoção, busca, filtros por categoria e importação/exportação JSON. Equipamentos de ar-condicionado usam um IP IPv4; os demais continuam com endpoints HTTPS públicos.
+- **Dispositivos:** cadastro, edição, remoção, busca, filtros por categoria e importação/exportação JSON. O cadastro padrão pede apenas o IP do ar-condicionado; nome e identificador são gerados automaticamente. Para módulos, sensores e dosadores, use a opção de outros tipos.
 - **Atividade:** histórico completo de comandos, alterações de configuração e transições de status, apresentado em páginas; o botão de relógio em cada dispositivo abre as leituras de heartbeat.
 - **Configurações:** estado de autenticação, Redis e orientação de conectividade segura.
 - **Comando local:** depois da confirmação, o botão do ar-condicionado abre `GET http://<IP>/airon1` em uma nova aba. Não usa `fetch`, então não depende de CORS nem de instalar um programa local.
@@ -68,7 +68,7 @@ O token de API é validado na função serverless e fica somente na memória da 
 
 ## Conectar equipamentos da rede
 
-Para controlar um ar-condicionado sem instalar nada, cadastre-o como **Ar-condicionado** e informe o IPv4 do equipamento. Use o celular ou computador na mesma rede local. O navegador abre o endereço HTTP do dispositivo em outra aba, enviando `GET /airon1`; a resposta do próprio equipamento aparece nessa aba. A Vercel só salva o IP no Redis e registra que a ação foi aberta, mas não envia o comando nem tenta monitorar esse IP.
+Para controlar um ar-condicionado sem instalar nada, use **Adicionar dispositivo** e informe somente o IPv4 do equipamento; não é necessário preencher nome ou categoria. A aplicação gera automaticamente o identificador a partir do IP e salva o cadastro no Redis. Use o celular ou computador na mesma rede local. O navegador abre o endereço HTTP do dispositivo em outra aba, enviando `GET /airon1`; a resposta do próprio equipamento aparece nessa aba. A Vercel salva o IP e registra que a ação foi aberta, mas não envia o comando nem tenta monitorar esse IP.
 
 Navegação direta não usa `fetch`, então não depende de CORS. Como o dispositivo usa HTTP, o comando e a resposta não são criptografados; use somente em uma rede confiável. O navegador pode exibir um aviso de segurança ou, por política local, impedir a navegação de uma página HTTPS para um endereço HTTP. Nesses casos, não há um modo browser-only garantido para contornar a proteção: seria necessário HTTPS no dispositivo ou um app/gateway que faça a chamada local. IPs dinâmicos precisam ser atualizados no cadastro.
 
@@ -81,7 +81,7 @@ Todos os caminhos exigem `Authorization: Bearer <HITEST_API_TOKEN>`.
 | Método | Caminho | Função |
 | --- | --- | --- |
 | `GET` | `/api/devices` | Lista a configuração. |
-| `PUT` | `/api/devices` | Substitui a lista no Redis. Dispositivos remotos usam `endpoint`; ar-condicionado local usa `{"id":"ar-01","category":"air_conditioners","ip":"IPV4-DO-EQUIPAMENTO"}`. |
+| `PUT` | `/api/devices` | Substitui a lista no Redis. Dispositivos remotos usam `endpoint`; ar-condicionado local usa `{"id":"ar-192-168-1-50","category":"air_conditioners","ip":"192.168.1.50"}`. O formulário gera o identificador automaticamente. |
 | `GET` | `/api/status` | Consulta `/heartbeat` dos dispositivos remotos e marca ar-condicionados como controle local. |
 | `GET` | `/api/devices/{id}/heartbeat` | Consulta um dispositivo remoto. Ar-condicionado é acessado diretamente no navegador. |
 | `POST` | `/api/devices/{id}/command` | Envia `/lb` para módulos de máquina e dosadores. |

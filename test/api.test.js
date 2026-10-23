@@ -98,6 +98,7 @@ test("provides the requested screens and local air-conditioner registration", as
   }
   assert.match(page, /device-endpoint/);
   assert.match(page, /device-ip/);
+  assert.match(page, /device-metadata-field" hidden/);
   assert.match(page, /air_conditioners/);
 });
 
@@ -113,6 +114,7 @@ test("provides responsive breakpoints and mobile-friendly device rows", async ()
   assert.match(stylesheet, /content: attr\(data-label\)/);
   assert.match(app, /data-label="IP \/ endpoint"/);
   assert.match(app, /http:\/\/\$\{device\.ip\}\/airon1/);
+  assert.match(app, /`ar-\$\{ip\.replace\(\/\\\.\/g, "-"\)\}`/);
 });
 
 test("keeps activity events without automatic trimming and paginates the full history", async () => {

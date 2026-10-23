@@ -137,23 +137,26 @@
       <form id="device-form" method="dialog">
         <div class="modal-heading"><div><div class="eyebrow">CONFIGURAÇÃO</div><h2 id="device-dialog-title">Adicionar dispositivo</h2></div><button type="button" class="modal-close" data-close="device-dialog" aria-label="Fechar">×</button></div>
         <input type="hidden" id="device-original-id">
-        <label class="field-label" for="device-id">Identificador</label>
-        <input class="text-input" id="device-id" placeholder="Ex.: modulo-01" maxlength="64" required>
-        <label class="field-label" for="device-category">Categoria</label>
-        <select class="text-input" id="device-category" required>
-          <option value="machine_modules">Módulo de máquina</option>
-          <option value="air_sensors">Sensor de ar</option>
-          <option value="online_dosers">Dosador online</option>
-          <option value="air_conditioners">Ar-condicionado (comando pela rede local)</option>
-        </select>
+        <div id="device-metadata-field" hidden>
+          <label class="field-label" for="device-id">Identificador</label>
+          <input class="text-input" id="device-id" placeholder="Ex.: modulo-01" maxlength="64">
+          <label class="field-label" for="device-category">Categoria</label>
+          <select class="text-input" id="device-category">
+            <option value="machine_modules">Módulo de máquina</option>
+            <option value="air_sensors">Sensor de ar</option>
+            <option value="online_dosers">Dosador online</option>
+            <option value="air_conditioners">Ar-condicionado (comando pela rede local)</option>
+          </select>
+        </div>
         <div id="device-endpoint-field">
           <label class="field-label" for="device-endpoint">Endpoint HTTPS público</label>
           <input class="text-input" id="device-endpoint" type="url" placeholder="https://equipamento.exemplo.com">
         </div>
-        <div id="device-ip-field" hidden>
-          <label class="field-label" for="device-ip">IP do ar-condicionado</label>
+        <div id="device-ip-field">
+          <label class="field-label" for="device-ip">IP do equipamento</label>
           <input class="text-input" id="device-ip" type="text" inputmode="decimal" placeholder="IP informado pelo equipamento" autocomplete="off">
         </div>
+        <button class="text-button device-advanced-toggle" type="button" id="device-advanced-toggle">Outros tipos: módulo, sensor ou dosador</button>
         <div class="modal-note" id="device-connectivity-note">Para monitoramento via Vercel, use um endpoint HTTPS público; IPs privados não podem ser consultados pelo servidor.</div>
         <div class="form-error" id="device-error" role="alert"></div>
         <div class="modal-actions"><button class="button button-quiet" type="button" data-close="device-dialog">Cancelar</button><button class="button button-primary" type="submit">Salvar dispositivo</button></div>

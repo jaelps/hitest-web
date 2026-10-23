@@ -20,6 +20,7 @@
     deviceHistory: [],
     deviceHistoryHasMore: false,
     deviceHistoryLoading: false,
+    deviceFormAdvanced: false,
     busy: false,
   };
 
@@ -187,7 +188,8 @@
     $("#device-dialog-title").textContent = device ? "Editar dispositivo" : "Adicionar dispositivo";
     $("#device-original-id").value = device ? device.id : "";
     $("#device-id").value = device ? device.id : "";
-    $("#device-category").value = device ? device.category : "machine_modules";
+    state.deviceFormAdvanced = device ? device.category !== "air_conditioners" : false;
+    $("#device-category").value = device ? device.category : "air_conditioners";
     $("#device-endpoint").value = device?.endpoint || "";
     $("#device-ip").value = device?.ip || "";
     updateDeviceFields();
@@ -196,12 +198,22 @@
 
   function updateDeviceFields() {
     const localOnly = $("#device-category").value === "air_conditioners";
+    const simpleIpForm = localOnly && !state.deviceFormAdvanced;
+    $("#device-metadata-field").hidden = simpleIpForm;
     $("#device-endpoint-field").hidden = localOnly;
     $("#device-ip-field").hidden = !localOnly;
+    $("#device-id").required = !simpleIpForm;
+    $("#device-category").required = !simpleIpForm;
     $("#device-endpoint").required = !localOnly;
     $("#device-ip").required = localOnly;
+    $("#device-advanced-toggle").hidden = Boolean($("#device-original-id").value);
+    $("#device-advanced-toggle").textContent = state.deviceFormAdvanced
+      ? "Voltar ao cadastro somente por IP"
+      : "Outros tipos: módulo, sensor ou dosador";
     $("#device-connectivity-note").textContent = localOnly
-      ? "O IP fica salvo no Redis. Ao tocar no botão de comando, o navegador abre http://<IP>/airon1 em uma nova aba. Use na mesma rede Wi-Fi do equipamento; o acesso é direto, sem passar pela Vercel."
+      ? simpleIpForm
+        ? "Informe somente o IP. O nome e o identificador são criados automaticamente. O comando GET /airon1 será aberto diretamente na rede conectada."
+        : "O IP fica salvo no Redis. Ao tocar no botão de comando, o navegador abre http://<IP>/airon1 em uma nova aba. Use na mesma rede Wi-Fi do equipamento; o acesso é direto, sem passar pela Vercel."
       : "Para monitoramento via Vercel, use um domínio HTTPS ou IP público; IPs privados não podem ser consultados pelo servidor.";
   }
 
@@ -235,6 +247,11 @@
   $("#refresh-button").addEventListener("click", () => refresh(true));
   $("#add-device").addEventListener("click", () => openDevice(null));
   $("#empty-add-device").addEventListener("click", () => openDevice(null));
+  $("#device-advanced-toggle").addEventListener("click", () => {
+    state.deviceFormAdvanced = !state.deviceFormAdvanced;
+    $("#device-category").value = state.deviceFormAdvanced ? "machine_modules" : "air_conditioners";
+    updateDeviceFields();
+  });
   $("#device-category").addEventListener("change", updateDeviceFields);
   $("#search-input").addEventListener("input", render);
   document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => $(`#${button.dataset.close}`).close()));
@@ -269,11 +286,14 @@
     event.preventDefault();
     const originalId = $("#device-original-id").value;
     const category = $("#device-category").value;
+    const ip = $("#device-ip").value.trim();
     const device = {
-      id: $("#device-id").value.trim(),
+      id: category === "air_conditioners"
+        ? originalId || `ar-${ip.replace(/\./g, "-")}`
+        : $("#device-id").value.trim(),
       category,
       ...(category === "air_conditioners"
-        ? { ip: $("#device-ip").value.trim() }
+        ? { ip }
         : { endpoint: $("#device-endpoint").value.trim() }),
     };
     const devices = state.devices.filter((item) => item.id !== originalId);
