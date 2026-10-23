@@ -146,7 +146,7 @@
         </select>
         <label class="field-label" for="device-endpoint">URL HTTPS segura do dispositivo</label>
         <input class="text-input" id="device-endpoint" type="url" placeholder="https://equipamento.seu-tunel-seguro.com" required>
-        <div class="modal-note">Vercel não alcança IPs privados. Use um domínio HTTPS de VPN/túnel autenticado, com certificado válido e acesso restrito. A configuração é persistida no Redis vinculado à Vercel.</div>
+        <div class="modal-note">Os comandos são encaminhados ao IP do dispositivo pela VPN/túnel. Cadastre aqui a URL HTTPS autenticada que encaminha as chamadas ao IP na rede local; a Vercel não alcança IPs privados diretamente. A configuração é persistida no Redis vinculado à Vercel.</div>
         <div class="form-error" id="device-error" role="alert"></div>
         <div class="modal-actions"><button class="button button-quiet" type="button" data-close="device-dialog">Cancelar</button><button class="button button-primary" type="submit">Salvar dispositivo</button></div>
       </form>

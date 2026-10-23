@@ -67,7 +67,7 @@ O token de API é validado na função serverless e fica somente na memória da 
 
 ## Conectar equipamentos da rede
 
-Uma função hospedada na Vercel **não consegue acessar diretamente IPs privados da LAN** onde os dispositivos estão instalados. Para manter todo o software da aplicação na Vercel, exponha cada equipamento por uma URL HTTPS que encaminhe `/heartbeat` e, para módulos de máquina/dosadores, `/lb` à rede autorizada. Isso exige VPN/túnel com autenticação e ACLs restritivas; prefira um túnel de saída iniciado dentro da rede a abrir portas no roteador. A URL e o certificado devem permanecer válidos a partir da rede da Vercel.
+Uma função hospedada na Vercel **não consegue acessar diretamente IPs privados da LAN** onde os dispositivos estão instalados. Os comandos `/lb` são destinados ao IP local do equipamento, mas, para manter o sistema hospedado na Vercel, o tráfego precisa passar por uma URL HTTPS pública de VPN/túnel que encaminhe `/heartbeat` e `/lb` para esse IP dentro da rede autorizada. Cadastre no painel a URL HTTPS do túnel, não o IP privado diretamente. Isso exige VPN/túnel com autenticação e ACLs restritivas; prefira um túnel de saída iniciado dentro da rede a abrir portas no roteador. A URL e o certificado devem permanecer válidos a partir da rede da Vercel.
 
 O acesso remoto não é automático só porque o navegador e os dispositivos estão na mesma rede. Uma página HTTPS também não pode usar destinos HTTP inseguros. Nunca exponha `/lb` ou o painel do dispositivo sem controles de acesso e nunca coloque tokens de túnel em URLs públicos; se o dispositivo exigir um cabeçalho de autenticação, é necessário estender o modelo da API para guardar esse segredo em ambiente seguro antes de conectá-lo.
 
@@ -85,4 +85,4 @@ Todos os caminhos exigem `Authorization: Bearer <HITEST_API_TOKEN>`.
 | `GET` | `/api/events?offset=0&limit=50` | Lê uma página do histórico permanente de eventos. |
 | `GET` | `/api/devices/{id}/history?offset=0&limit=25` | Lê uma página de todas as verificações permanentes do dispositivo, inclusive após sua remoção. |
 
-Categorias: `machine_modules`, `air_sensors`, `online_dosers`. O endpoint de um dispositivo precisa ser HTTPS em domínio público; endereços IP literais, hosts internos, respostas DNS privadas e redirecionamentos são rejeitados. As consultas têm limite de tempo e tamanho de resposta.
+Categorias: `machine_modules`, `air_sensors`, `online_dosers`. O endpoint de um dispositivo precisa ser HTTPS em domínio público; endereços IP literais, hosts internos, respostas DNS privadas e redirecionamentos são rejeitados. O túnel encaminha a chamada ao IP configurado na rede local. As consultas têm limite de tempo e tamanho de resposta.
