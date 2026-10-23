@@ -23,10 +23,15 @@ test("rejects duplicate ids and malformed device lists", () => {
 });
 
 test("blocks non-public addresses before the serverless function calls a device", () => {
-  for (const address of ["10.1.2.3", "172.16.0.1", "192.168.1.1", "127.0.0.1", "169.254.169.254", "100.64.0.1", "::1"]) {
+  for (const address of [
+    "10.1.2.3", "172.16.0.1", "192.168.1.1", "127.0.0.1",
+    "169.254.169.254", "100.64.0.1", "198.51.100.1", "203.0.113.1", "::1",
+  ]) {
     assert.equal(isPublicAddress(address), false, `${address} must not be public`);
   }
-  assert.equal(isPublicAddress("1.1.1.1"), true);
+  for (const address of ["1.1.1.1", "198.51.101.1", "203.0.114.1"]) {
+    assert.equal(isPublicAddress(address), true, `${address} must be public`);
+  }
 });
 
 test("decodes API route path segments", () => {
