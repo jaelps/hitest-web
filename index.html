@@ -30,6 +30,7 @@
           <button class="nav-item" data-category="machine_modules"><span class="nav-icon">▦</span>Módulos de máquina<span class="nav-count" id="machine-count">0</span></button>
           <button class="nav-item" data-category="air_sensors"><span class="nav-icon">◉</span>Sensores de ar<span class="nav-count" id="sensor-count">0</span></button>
           <button class="nav-item" data-category="online_dosers"><span class="nav-icon">◌</span>Dosadores online<span class="nav-count" id="doser-count">0</span></button>
+          <button class="nav-item" data-category="air_conditioners"><span class="nav-icon">❄</span>Ar-condicionado<span class="nav-count" id="air-conditioner-count">0</span></button>
         </nav>
         <div class="sidebar-bottom">
           <div class="gateway-card">
@@ -64,7 +65,7 @@
           <article class="metric-card metric-total"><div class="metric-top"><span>Total de dispositivos</span><span class="metric-icon">▦</span></div><strong id="total-metric">0</strong><small>em todas as categorias</small></article>
           <article class="metric-card"><div class="metric-top"><span>Online</span><span class="metric-status online"></span></div><strong id="online-metric">0</strong><small>dispositivos respondendo</small></article>
           <article class="metric-card"><div class="metric-top"><span>Offline</span><span class="metric-status offline"></span></div><strong id="offline-metric">0</strong><small>precisam de atenção</small></article>
-          <article class="metric-card"><div class="metric-top"><span>Disponibilidade</span><span class="metric-icon availability-icon">↗</span></div><strong id="availability-metric">—<span class="percent">%</span></strong><small>dos dispositivos online</small></article>
+          <article class="metric-card"><div class="metric-top"><span>Disponibilidade</span><span class="metric-icon availability-icon">↗</span></div><strong id="availability-metric">—<span class="percent">%</span></strong><small>dos dispositivos monitorados</small></article>
         </section>
 
         <section class="devices-section screen-dashboard">
@@ -78,13 +79,13 @@
           </div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>DISPOSITIVO</th><th>CATEGORIA</th><th>ENDPOINT HTTPS</th><th>STATUS</th><th>ÚLTIMA RESPOSTA</th><th>VERSÃO</th><th>TEMPO ATIVO</th><th>AÇÕES</th></tr></thead>
+              <thead><tr><th>DISPOSITIVO</th><th>CATEGORIA</th><th>IP / ENDPOINT</th><th>STATUS</th><th>ÚLTIMA RESPOSTA</th><th>VERSÃO</th><th>TEMPO ATIVO</th><th>AÇÕES</th></tr></thead>
               <tbody id="device-rows"></tbody>
             </table>
             <div class="empty-state" id="empty-state">
               <div class="empty-illustration">⌁</div>
               <h3>Nenhum dispositivo por aqui</h3>
-              <p>Adicione um dispositivo com endereço público acessível pela internet para começar o monitoramento.</p>
+              <p>Cadastre um endpoint público ou o IP local de um ar-condicionado para começar.</p>
               <button class="button button-primary" id="empty-add-device">＋ Adicionar dispositivo</button>
             </div>
           </div>
@@ -111,7 +112,7 @@
               <div class="screen-card-heading"><div><h2>Conectividade</h2><p>Integração dos dispositivos com o backend Vercel.</p></div><span class="settings-icon">⌁</span></div>
               <div class="settings-detail"><span>API</span><strong id="settings-api-state">Aguardando autenticação</strong></div>
               <div class="settings-detail"><span>Atualização automática</span><strong>A cada 15 segundos</strong></div>
-              <p class="settings-warning">Não é necessário instalar programas nas máquinas. A Vercel acessa diretamente o IP público do equipamento; o endereço precisa estar acessível pela internet nas portas 80 (HTTP IPv4) ou 443 (HTTPS). IPs privados são bloqueados.</p>
+              <p class="settings-warning">Ar-condicionado: o navegador abre diretamente http://IP/airon1 e o celular/computador precisa estar na mesma rede Wi-Fi do equipamento. Outros equipamentos são monitorados pela Vercel e precisam de domínio HTTPS público ou IP público.</p>
             </article>
           </div>
           <div class="security-banner"><span>!</span><div><strong>Proteja a rede e as credenciais</strong><p>Configure HITEST_API_TOKEN e as credenciais Redis somente nas variáveis de ambiente da Vercel. Nunca publique o token do painel nem URLs que funcionem como segredos.</p></div></div>
@@ -143,10 +144,17 @@
           <option value="machine_modules">Módulo de máquina</option>
           <option value="air_sensors">Sensor de ar</option>
           <option value="online_dosers">Dosador online</option>
+          <option value="air_conditioners">Ar-condicionado (comando pela rede local)</option>
         </select>
-        <label class="field-label" for="device-endpoint">Endereço público do dispositivo</label>
-        <input class="text-input" id="device-endpoint" type="url" placeholder="http://IP-PUBLICO-DO-EQUIPAMENTO" required>
-        <div class="modal-note">Não é necessário instalar programas nem manter um servidor local: a API na Vercel chama diretamente o IP público. Aceitamos HTTP em IPv4 público (porta 80) ou HTTPS em IP público IPv4/IPv6 (porta 443); domínios devem usar HTTPS. IPs privados e portas personalizadas são bloqueados. HTTP não criptografa comandos: prefira HTTPS. O IP e a porta precisam estar acessíveis da internet, com firewall configurado. A lista fica salva no Redis.</div>
+        <div id="device-endpoint-field">
+          <label class="field-label" for="device-endpoint">Endpoint HTTPS público</label>
+          <input class="text-input" id="device-endpoint" type="url" placeholder="https://equipamento.exemplo.com">
+        </div>
+        <div id="device-ip-field" hidden>
+          <label class="field-label" for="device-ip">IP do ar-condicionado</label>
+          <input class="text-input" id="device-ip" type="text" inputmode="decimal" placeholder="IP informado pelo equipamento" autocomplete="off">
+        </div>
+        <div class="modal-note" id="device-connectivity-note">Para monitoramento via Vercel, use um endpoint HTTPS público; IPs privados não podem ser consultados pelo servidor.</div>
         <div class="form-error" id="device-error" role="alert"></div>
         <div class="modal-actions"><button class="button button-quiet" type="button" data-close="device-dialog">Cancelar</button><button class="button button-primary" type="submit">Salvar dispositivo</button></div>
       </form>

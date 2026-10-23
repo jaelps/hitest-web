@@ -5,8 +5,9 @@
     machine_modules: "Módulo de máquina",
     air_sensors: "Sensor de ar",
     online_dosers: "Dosador online",
+    air_conditioners: "Ar-condicionado",
   };
-  const categoryIcons = { machine_modules: "▦", air_sensors: "◉", online_dosers: "◌" };
+  const categoryIcons = { machine_modules: "▦", air_sensors: "◉", online_dosers: "◌", air_conditioners: "❄" };
   const state = {
     devices: [],
     category: "all",
@@ -57,7 +58,7 @@
     const term = $("#search-input").value.trim().toLowerCase();
     const devices = state.devices.filter((device) => {
       const matchesCategory = state.category === "all" || device.category === state.category;
-      const matchesSearch = !term || `${device.id} ${device.endpoint} ${categoryNames[device.category]}`.toLowerCase().includes(term);
+      const matchesSearch = !term || `${device.id} ${device.ip || device.endpoint} ${categoryNames[device.category]}`.toLowerCase().includes(term);
       return matchesCategory && matchesSearch;
     });
     return state.screen === "overview" ? devices.slice(0, 5) : devices;
@@ -68,22 +69,26 @@
     const onlineCount = state.devices.filter((device) => device.status === "online").length;
     const offlineCount = state.devices.filter((device) => device.status === "offline").length;
     const total = state.devices.length;
+    const remotelyMonitored = state.devices.filter((device) => device.category !== "air_conditioners").length;
     $("#total-metric").textContent = total;
     $("#online-metric").textContent = onlineCount;
     $("#offline-metric").textContent = offlineCount;
-    $("#availability-metric").innerHTML = `${total ? Math.round((onlineCount / total) * 100) : "—"}<span class="percent">%</span>`;
+    $("#availability-metric").innerHTML = `${remotelyMonitored ? Math.round((onlineCount / remotelyMonitored) * 100) : "—"}<span class="percent">%</span>`;
     $("#all-count").textContent = total;
     $("#machine-count").textContent = state.devices.filter((device) => device.category === "machine_modules").length;
     $("#sensor-count").textContent = state.devices.filter((device) => device.category === "air_sensors").length;
     $("#doser-count").textContent = state.devices.filter((device) => device.category === "online_dosers").length;
+    $("#air-conditioner-count").textContent = state.devices.filter((device) => device.category === "air_conditioners").length;
     const rows = $("#device-rows");
     rows.innerHTML = devices.map((device) => {
       const status = device.status || "unknown";
-      const statusLabel = status === "online" ? "Online" : status === "offline" ? "Offline" : "Aguardando";
-      const canCommand = device.category !== "air_sensors";
-      let endpointHost = "—";
-      try { endpointHost = new URL(device.endpoint).host; } catch { /* Invalid imported data is rejected by the API. */ }
-      let lastSeen = "Nunca";
+      const statusLabel = status === "online" ? "Online" : status === "offline" ? "Offline" : status === "local_only" ? "Controle local" : "Aguardando";
+      const canCommand = device.category === "machine_modules" || device.category === "online_dosers";
+      let endpointHost = device.ip || "—";
+      if (!device.ip) {
+        try { endpointHost = new URL(device.endpoint).host; } catch { /* Invalid imported data is rejected by the API. */ }
+      }
+      let lastSeen = device.category === "air_conditioners" ? "Sem verificação remota" : "Nunca";
       if (device.lastSeen) {
         const timestamp = new Date(device.lastSeen);
         if (!Number.isNaN(timestamp.getTime())) {
@@ -93,14 +98,15 @@
       return `<tr>
         <td data-label="Dispositivo"><div class="device-name"><span class="device-avatar">${categoryIcons[device.category]}</span><span>${escapeHtml(device.id)}<span class="device-id">HITEST DEVICE</span></span></div></td>
         <td data-label="Categoria"><span class="category-tag">${categoryNames[device.category]}</span></td>
-        <td data-label="Endereço público"><span class="ip-address">${escapeHtml(endpointHost)}</span></td>
-        <td data-label="Status"><span class="status-pill ${status}">${statusLabel}</span></td>
+        <td data-label="IP / endpoint"><span class="ip-address">${escapeHtml(endpointHost)}</span></td>
+        <td data-label="Status"><span class="status-pill ${status === "local_only" ? "unknown" : status}">${statusLabel}</span></td>
         <td data-label="Última resposta"><span class="uptime">${escapeHtml(lastSeen)}</span></td>
         <td data-label="Versão"><span class="device-version">${escapeHtml(device.version || "—")}</span></td>
         <td data-label="Tempo ativo"><span class="uptime">${escapeHtml(device.uptime || "—")}</span></td>
         <td data-label="Ações"><div class="row-actions">
           ${canCommand ? `<button class="row-action command" data-action="command" data-id="${escapeHtml(device.id)}" title="Executar ação /lb" aria-label="Executar ação em ${escapeHtml(device.id)}">▶</button>` : ""}
-          <button class="row-action" data-action="history" data-id="${escapeHtml(device.id)}" title="Ver histórico salvo" aria-label="Ver histórico salvo de ${escapeHtml(device.id)}">◷</button>
+          ${device.category === "air_conditioners" ? `<button class="row-action command" data-action="local-command" data-id="${escapeHtml(device.id)}" title="Enviar GET /airon1 pela rede local" aria-label="Ligar ar-condicionado ${escapeHtml(device.id)}">❄</button>` : ""}
+          ${device.category === "air_conditioners" ? "" : `<button class="row-action" data-action="history" data-id="${escapeHtml(device.id)}" title="Ver histórico salvo" aria-label="Ver histórico salvo de ${escapeHtml(device.id)}">◷</button>`}
           <button class="row-action" data-action="edit" data-id="${escapeHtml(device.id)}" title="Editar dispositivo" aria-label="Editar ${escapeHtml(device.id)}">✎</button>
           <button class="row-action delete" data-action="delete" data-id="${escapeHtml(device.id)}" title="Remover dispositivo" aria-label="Remover ${escapeHtml(device.id)}">×</button>
         </div></td>
@@ -155,7 +161,10 @@
   async function loadDevices() {
     try {
       const result = await request("/devices");
-      state.devices = result.devices.map((device) => ({ ...device, status: "unknown" }));
+      state.devices = result.devices.map((device) => ({
+        ...device,
+        status: device.category === "air_conditioners" ? "local_only" : "unknown",
+      }));
       setConnection(true, "API Vercel conectada.");
       render();
       await refresh();
@@ -179,13 +188,29 @@
     $("#device-original-id").value = device ? device.id : "";
     $("#device-id").value = device ? device.id : "";
     $("#device-category").value = device ? device.category : "machine_modules";
-    $("#device-endpoint").value = device ? device.endpoint : "";
+    $("#device-endpoint").value = device?.endpoint || "";
+    $("#device-ip").value = device?.ip || "";
+    updateDeviceFields();
     $("#device-dialog").showModal();
+  }
+
+  function updateDeviceFields() {
+    const localOnly = $("#device-category").value === "air_conditioners";
+    $("#device-endpoint-field").hidden = localOnly;
+    $("#device-ip-field").hidden = !localOnly;
+    $("#device-endpoint").required = !localOnly;
+    $("#device-ip").required = localOnly;
+    $("#device-connectivity-note").textContent = localOnly
+      ? "O IP fica salvo no Redis. Ao tocar no botão de comando, o navegador abre http://<IP>/airon1 em uma nova aba. Use na mesma rede Wi-Fi do equipamento; o acesso é direto, sem passar pela Vercel."
+      : "Para monitoramento via Vercel, use um domínio HTTPS ou IP público; IPs privados não podem ser consultados pelo servidor.";
   }
 
   async function saveDevices(devices) {
     const result = await request("/devices", { method: "PUT", body: JSON.stringify({ devices }) });
-    state.devices = result.devices.map((device) => ({ ...device, status: "unknown" }));
+    state.devices = result.devices.map((device) => ({
+      ...device,
+      status: device.category === "air_conditioners" ? "local_only" : "unknown",
+    }));
     render();
   }
 
@@ -210,6 +235,7 @@
   $("#refresh-button").addEventListener("click", () => refresh(true));
   $("#add-device").addEventListener("click", () => openDevice(null));
   $("#empty-add-device").addEventListener("click", () => openDevice(null));
+  $("#device-category").addEventListener("change", updateDeviceFields);
   $("#search-input").addEventListener("input", render);
   document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => $(`#${button.dataset.close}`).close()));
 
@@ -242,10 +268,13 @@
   $("#device-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const originalId = $("#device-original-id").value;
+    const category = $("#device-category").value;
     const device = {
       id: $("#device-id").value.trim(),
-      category: $("#device-category").value,
-      endpoint: $("#device-endpoint").value.trim(),
+      category,
+      ...(category === "air_conditioners"
+        ? { ip: $("#device-ip").value.trim() }
+        : { endpoint: $("#device-endpoint").value.trim() }),
     };
     const devices = state.devices.filter((item) => item.id !== originalId);
     devices.push(device);
@@ -279,10 +308,23 @@
         notify(`Ação enviada para ${device.id}.`);
       } catch (error) { notify(error.message, true); }
     }
+    if (button.dataset.action === "local-command") {
+      if (!window.confirm(`Abrir GET http://${device.ip}/airon1 para ${device.id}? O celular precisa estar na mesma rede Wi-Fi.`)) return;
+      const link = document.createElement("a");
+      link.href = `http://${device.ip}/airon1`;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      request(`/devices/${encodeURIComponent(device.id)}/local-command`, { method: "POST" })
+        .then(() => notify(`Comando /airon1 aberto para ${device.id}. Confira a resposta na nova aba.`))
+        .catch((error) => notify(`Comando aberto, mas não foi possível salvar o evento: ${error.message}`, true));
+    }
   });
 
   $("#export-button").addEventListener("click", () => {
-    const data = JSON.stringify({ devices: state.devices.map(({ id, endpoint, category }) => ({ id, endpoint, category })) }, null, 2);
+    const data = JSON.stringify({ devices: state.devices.map(({ id, endpoint, ip, category }) => ({ id, endpoint, ip, category })) }, null, 2);
     const url = URL.createObjectURL(new Blob([data], { type: "application/json" }));
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -321,7 +363,7 @@
       state.eventsHasMore = result.hasMore;
       $("#activity-list").innerHTML = state.events.length ? state.events.map((item) => `
         <article class="activity-row">
-          <span class="activity-marker ${item.type === "command_failed" ? "failed" : ""}">${item.type === "command_sent" ? "▶" : item.type === "command_failed" ? "!" : "↻"}</span>
+          <span class="activity-marker ${item.type === "command_failed" ? "failed" : ""}">${item.type === "command_sent" || item.type === "local_command_opened" ? "▶" : item.type === "command_failed" ? "!" : "↻"}</span>
           <div class="activity-copy"><strong>${escapeHtml(item.description)}</strong><span>${escapeHtml(item.device || "Sistema")}</span></div>
           <time>${escapeHtml(new Date(item.timestamp).toLocaleString("pt-BR"))}</time>
         </article>`).join("") : '<div class="activity-empty">Ainda não há eventos registrados.</div>';
