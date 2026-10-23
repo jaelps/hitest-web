@@ -126,7 +126,7 @@
         <p class="modal-description">Informe o token HITEST_API_TOKEN configurado nas variáveis de ambiente da Vercel. O token fica somente nesta sessão do navegador.</p>
         <label class="field-label" for="gateway-token">Token da API</label>
         <input class="text-input" id="gateway-token" type="password" placeholder="Cole o token HITEST_API_TOKEN da Vercel" autocomplete="off" required>
-        <div class="modal-note">O frontend chama a API na mesma origem. O token não é incluído no bundle do site nem enviado para armazenamento persistente do navegador. Os dados cadastrados e o histórico ficam no Redis até você removê-los ou excluir o banco.</div>
+        <div class="modal-note">O frontend chama a API na mesma origem. O token não é incluído no bundle do site nem enviado para armazenamento persistente do navegador. Cadastro, leituras do heartbeat e histórico ficam no Redis sem expiração automática.</div>
         <div class="form-error" id="settings-error" role="alert"></div>
         <div class="modal-actions"><button class="button button-quiet" type="button" id="clear-token">Limpar token</button><button class="button button-primary" type="submit">Conectar</button></div>
       </form>
@@ -150,6 +150,16 @@
         <div class="form-error" id="device-error" role="alert"></div>
         <div class="modal-actions"><button class="button button-quiet" type="button" data-close="device-dialog">Cancelar</button><button class="button button-primary" type="submit">Salvar dispositivo</button></div>
       </form>
+    </dialog>
+
+    <dialog id="history-dialog" class="modal history-modal">
+      <div class="modal-heading">
+        <div><div class="eyebrow">DADOS SALVOS</div><h2>Histórico do dispositivo</h2><p class="modal-description" id="history-device-name"></p></div>
+        <button type="button" class="modal-close" data-close="history-dialog" aria-label="Fechar">×</button>
+      </div>
+      <div class="history-summary" id="history-summary">Carregando registros...</div>
+      <div class="history-records" id="device-history-records"></div>
+      <button class="button button-quiet load-more-events" id="load-more-device-history" hidden>Carregar mais leituras</button>
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>

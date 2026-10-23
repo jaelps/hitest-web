@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   appendEvent,
   decodePath,
+  getDeviceHistoryPage,
   getEventPage,
   getPageParameters,
   getStatus,
@@ -120,4 +121,29 @@ test("persists the latest device status and preserves last-seen metrics while of
   assert.equal(persisted.status, "offline");
   assert.equal(persisted.version, "2.0");
   assert.ok(persisted.checkedAt);
+});
+
+test("saves every online and offline heartbeat to permanent per-device history", async () => {
+  const histories = new Map();
+  const redis = {
+    async hgetall() { return {}; },
+    async hset() {},
+    async lpush(key, record) {
+      histories.set(key, [record, ...(histories.get(key) || [])]);
+    },
+  };
+  const onlinePayload = { device: "module-01", version: "2.2", uptime: 88, status: "ready" };
+  await getStatus(redis, [validDevice], async () => ({
+    body: Buffer.from(JSON.stringify(onlinePayload)),
+  }));
+  await getStatus(redis, [validDevice], async () => {
+    throw new Error("offline");
+  });
+
+  const page = await getDeviceHistoryPage(redis, validDevice.id, 0, 10);
+  assert.equal(page.total, 2);
+  assert.equal(page.hasMore, false);
+  assert.equal(page.records[0].status, "offline");
+  assert.equal(page.records[1].payload.version, "2.2");
+  assert.equal(page.records[1].payload.uptime, 88);
 });

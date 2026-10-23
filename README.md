@@ -6,15 +6,17 @@ O repositório começa sem dispositivos nem endereços privados. Cada dispositiv
 
 ## Persistência dos dados
 
-As configurações de dispositivos, o status mais recente (incluindo versão, uptime e horário da última resposta) e o histórico de atividade são salvos no Redis persistente da Vercel. **A aplicação não define prazo de expiração, não remove eventos antigos e não apaga esses dados ao recarregar a página, encerrar a sessão ou fazer deploy.** Os eventos são exibidos em páginas para que históricos grandes continuem acessíveis. Mudanças de status só geram um novo evento quando o equipamento troca entre online e offline; as verificações periódicas atualizam o último status sem gerar centenas de cópias idênticas.
+As configurações de dispositivos, o status mais recente (incluindo versão, uptime e horário da última resposta), o histórico de atividade e cada resultado de verificação de heartbeat (online ou offline) são salvos no Redis persistente da Vercel. **A aplicação não define prazo de expiração, não remove registros antigos e não apaga esses dados ao recarregar a página, encerrar a sessão ou fazer deploy.** Os históricos são paginados; use o botão de relógio na lista de dispositivos para consultar as leituras de um equipamento.
 
-Os dados permanecem enquanto o banco Upstash vinculado existir e mantiver a configuração normal de persistência do provedor. Excluir/desvincular o banco ou apagá-lo no painel do provedor remove o armazenamento da aplicação; para recuperação de desastres, configure backups/snapshots no Upstash e mantenha as credenciais de recuperação seguras. A ação **Remover dispositivo** exclui o dispositivo da lista ativa intencionalmente, mas não apaga eventos já registrados.
+Os dados permanecem enquanto o banco Upstash vinculado existir e mantiver a configuração normal de persistência do provedor. Excluir/desvincular o banco ou apagá-lo no painel do provedor remove o armazenamento da aplicação; para recuperação de desastres, configure backups/snapshots no Upstash e mantenha as credenciais de recuperação seguras. A ação **Remover dispositivo** exclui o dispositivo da lista ativa intencionalmente, mas não apaga as leituras e os eventos já registrados. O histórico por dispositivo também pode ser consultado pelo ID após sua remoção.
+
+Cada verificação periódica gera um registro permanente por dispositivo. Como a tela consulta o status a cada 15 segundos, o espaço consumido e o custo do banco crescem continuamente com o número de dispositivos e o tempo de uso; acompanhe os limites e preços do plano Upstash. Os registros permanecem disponíveis até serem removidos manualmente ou o banco ser apagado.
 
 ## Telas
 
 - **Visão geral:** contagem, disponibilidade, estado dos equipamentos e atualização a cada 15 segundos.
 - **Dispositivos:** cadastro, edição, remoção, busca, filtros por categoria e importação/exportação JSON.
-- **Atividade:** histórico completo de comandos, alterações de configuração e transições de status, apresentado em páginas.
+- **Atividade:** histórico completo de comandos, alterações de configuração e transições de status, apresentado em páginas; o botão de relógio em cada dispositivo abre as leituras de heartbeat.
 - **Configurações:** estado de autenticação, Redis e orientação de conectividade segura.
 
 ## Layout adaptável
@@ -81,5 +83,6 @@ Todos os caminhos exigem `Authorization: Bearer <HITEST_API_TOKEN>`.
 | `GET` | `/api/devices/{id}/heartbeat` | Consulta um equipamento. |
 | `POST` | `/api/devices/{id}/command` | Envia `/lb` para módulos de máquina e dosadores. |
 | `GET` | `/api/events?offset=0&limit=50` | Lê uma página do histórico permanente de eventos. |
+| `GET` | `/api/devices/{id}/history?offset=0&limit=25` | Lê uma página de todas as verificações permanentes do dispositivo, inclusive após sua remoção. |
 
 Categorias: `machine_modules`, `air_sensors`, `online_dosers`. O endpoint de um dispositivo precisa ser HTTPS em domínio público; endereços IP literais, hosts internos, respostas DNS privadas e redirecionamentos são rejeitados. As consultas têm limite de tempo e tamanho de resposta.

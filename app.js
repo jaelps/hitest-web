@@ -15,6 +15,10 @@
     events: [],
     eventsHasMore: false,
     eventsLoading: false,
+    historyDeviceId: null,
+    deviceHistory: [],
+    deviceHistoryHasMore: false,
+    deviceHistoryLoading: false,
     busy: false,
   };
 
@@ -96,6 +100,7 @@
         <td data-label="Tempo ativo"><span class="uptime">${escapeHtml(device.uptime || "—")}</span></td>
         <td data-label="Ações"><div class="row-actions">
           ${canCommand ? `<button class="row-action command" data-action="command" data-id="${escapeHtml(device.id)}" title="Executar ação /lb" aria-label="Executar ação em ${escapeHtml(device.id)}">▶</button>` : ""}
+          <button class="row-action" data-action="history" data-id="${escapeHtml(device.id)}" title="Ver histórico salvo" aria-label="Ver histórico salvo de ${escapeHtml(device.id)}">◷</button>
           <button class="row-action" data-action="edit" data-id="${escapeHtml(device.id)}" title="Editar dispositivo" aria-label="Editar ${escapeHtml(device.id)}">✎</button>
           <button class="row-action delete" data-action="delete" data-id="${escapeHtml(device.id)}" title="Remover dispositivo" aria-label="Remover ${escapeHtml(device.id)}">×</button>
         </div></td>
@@ -260,6 +265,7 @@
     const device = state.devices.find((item) => item.id === button.dataset.id);
     if (!device) return;
     if (button.dataset.action === "edit") openDevice(device);
+    if (button.dataset.action === "history") openDeviceHistory(device);
     if (button.dataset.action === "delete") {
       if (!window.confirm(`Remover o dispositivo "${device.id}"?`)) return;
       try {
@@ -328,6 +334,80 @@
       $("#load-more-events").disabled = false;
     }
   }
+
+  function renderDeviceHistory() {
+    $("#device-history-records").innerHTML = state.deviceHistory.length
+      ? state.deviceHistory.map((record) => {
+        const payload = record.payload || {};
+        const values = [
+          ["Dispositivo", payload.device],
+          ["Status informado", payload.status],
+          ["Versão", payload.version],
+          ["Tempo ativo", payload.uptime],
+        ].filter(([, value]) => value !== undefined && value !== null && value !== "");
+        return `<article class="device-history-record">
+          <div class="history-record-heading">
+            <span class="status-pill ${record.status === "online" ? "online" : "offline"}">${record.status === "online" ? "Online" : "Offline"}</span>
+            <time>${escapeHtml(new Date(record.checkedAt).toLocaleString("pt-BR"))}</time>
+          </div>
+          ${values.length ? `<dl>${values.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>` : ""}
+          ${record.error ? `<p class="history-error">${escapeHtml(record.error)}</p>` : ""}
+        </article>`;
+      }).join("")
+      : '<div class="activity-empty">Nenhuma leitura salva para este dispositivo.</div>';
+    $("#history-summary").textContent = state.deviceHistory.length
+      ? `${state.deviceHistory.length} de ${state.deviceHistoryTotal} leituras salvas permanentemente`
+      : `0 de ${state.deviceHistoryTotal || 0} leituras salvas`;
+    $("#load-more-device-history").hidden = !state.deviceHistoryHasMore;
+  }
+
+  async function loadDeviceHistory(loadMore = false) {
+    if (!state.historyDeviceId || state.deviceHistoryLoading) return;
+    const requestedDeviceId = state.historyDeviceId;
+    state.deviceHistoryLoading = true;
+    const offset = loadMore ? state.deviceHistory.length : 0;
+    $("#load-more-device-history").disabled = true;
+    try {
+      const id = encodeURIComponent(requestedDeviceId);
+      const result = await request(`/devices/${id}/history?offset=${offset}&limit=25`);
+      if (state.historyDeviceId !== requestedDeviceId) return;
+      state.deviceHistory = loadMore ? state.deviceHistory.concat(result.records) : result.records;
+      state.deviceHistoryTotal = result.total;
+      state.deviceHistoryHasMore = result.hasMore;
+      renderDeviceHistory();
+    } catch (error) {
+      if (state.historyDeviceId !== requestedDeviceId) return;
+      if (!loadMore || !state.deviceHistory.length) {
+        $("#device-history-records").innerHTML = `<div class="activity-empty">${escapeHtml(error.message)}</div>`;
+        $("#history-summary").textContent = "Não foi possível consultar o histórico.";
+      } else {
+        notify(`Não foi possível carregar mais leituras: ${error.message}`, true);
+      }
+    } finally {
+      state.deviceHistoryLoading = false;
+      $("#load-more-device-history").disabled = false;
+      if (state.historyDeviceId && state.historyDeviceId !== requestedDeviceId) loadDeviceHistory();
+    }
+  }
+
+  function openDeviceHistory(device) {
+    state.historyDeviceId = device.id;
+    state.deviceHistory = [];
+    state.deviceHistoryTotal = 0;
+    state.deviceHistoryHasMore = false;
+    $("#history-device-name").textContent = device.id;
+    $("#history-summary").textContent = "Carregando registros...";
+    $("#device-history-records").innerHTML = "";
+    $("#load-more-device-history").hidden = true;
+    $("#history-dialog").showModal();
+    loadDeviceHistory();
+  }
+
+  $("#load-more-device-history").addEventListener("click", () => loadDeviceHistory(true));
+  $("#history-dialog").addEventListener("close", () => {
+    state.historyDeviceId = null;
+    state.deviceHistory = [];
+  });
 
   if (state.token) loadDevices().catch(() => {});
   else {

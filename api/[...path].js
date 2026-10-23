@@ -7,6 +7,7 @@ const CATEGORIES = new Set(["machine_modules", "air_sensors", "online_dosers"]);
 const DEVICE_KEY = "hitest:web:devices";
 const EVENT_KEY = "hitest:web:events";
 const STATUS_KEY = "hitest:web:device-status";
+const DEVICE_HISTORY_KEY_PREFIX = "hitest:web:device-history:";
 const MAX_DEVICES = 100;
 const DEFAULT_EVENT_PAGE_SIZE = 50;
 const MAX_EVENT_PAGE_SIZE = 100;
@@ -170,6 +171,7 @@ async function getDevices(redis) {
 async function getStatus(redis, devices, probeDevice = deviceRequest) {
   const previousStatuses = await redis.hgetall(STATUS_KEY) || {};
   const statusUpdates = {};
+  const historyWrites = [];
   const transitions = [];
   const results = [];
   for (let offset = 0; offset < devices.length; offset += STATUS_CONCURRENCY) {
@@ -191,6 +193,10 @@ async function getStatus(redis, devices, probeDevice = deviceRequest) {
           checkedAt,
           lastSeen: checkedAt,
         };
+        historyWrites.push({
+          key: `${DEVICE_HISTORY_KEY_PREFIX}${device.id}`,
+          record: JSON.stringify({ checkedAt, status: "online", payload }),
+        });
         statusUpdates[device.id] = JSON.stringify(status);
         if (previous?.status !== "online") transitions.push({ type: "device_online", device: device.id, description: `${device.id} está online.` });
         return status;
@@ -205,6 +211,10 @@ async function getStatus(redis, devices, probeDevice = deviceRequest) {
           lastSeen: previous?.lastSeen || null,
           error: error.message,
         };
+        historyWrites.push({
+          key: `${DEVICE_HISTORY_KEY_PREFIX}${device.id}`,
+          record: JSON.stringify({ checkedAt, status: "offline", error: error.message }),
+        });
         statusUpdates[device.id] = JSON.stringify(status);
         if (previous?.status !== "offline") transitions.push({ type: "device_offline", device: device.id, description: `${device.id} está offline.` });
         return status;
@@ -212,6 +222,7 @@ async function getStatus(redis, devices, probeDevice = deviceRequest) {
     })));
   }
   if (Object.keys(statusUpdates).length) await redis.hset(STATUS_KEY, statusUpdates);
+  await Promise.all(historyWrites.map(({ key, record }) => redis.lpush(key, record)));
   for (const transition of transitions) await appendEvent(redis, transition);
   return results;
 }
@@ -240,13 +251,36 @@ async function getEventPage(redis, offset, limit) {
   };
 }
 
+async function getDeviceHistoryPage(redis, deviceId, offset, limit) {
+  const key = `${DEVICE_HISTORY_KEY_PREFIX}${deviceId}`;
+  const [records, total] = await Promise.all([
+    redis.lrange(key, offset, offset + limit - 1),
+    redis.llen(key),
+  ]);
+  return {
+    records: records.map((record) => typeof record === "string" ? JSON.parse(record) : record),
+    total,
+    offset,
+    hasMore: offset + records.length < total,
+  };
+}
+
 function decodePath(path) {
   if (Array.isArray(path)) return path.map((part) => decodeURIComponent(part));
   if (typeof path === "string") return path.split("/").filter(Boolean).map((part) => decodeURIComponent(part));
   return [];
 }
 
-export { appendEvent, decodePath, getEventPage, getPageParameters, getStatus, isPublicAddress, validateDevices };
+export {
+  appendEvent,
+  decodePath,
+  getDeviceHistoryPage,
+  getEventPage,
+  getPageParameters,
+  getStatus,
+  isPublicAddress,
+  validateDevices,
+};
 
 export default async function handler(request, response) {
   try {
@@ -273,6 +307,13 @@ export default async function handler(request, response) {
     if (path.length === 1 && path[0] === "events" && request.method === "GET") {
       const { offset, limit } = getPageParameters(request.query);
       return respond(response, 200, await getEventPage(redis, offset, limit));
+    }
+    if (path.length === 3 && path[0] === "devices" && path[2] === "history" && request.method === "GET") {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(path[1])) {
+        return respond(response, 400, { detail: "Identificador de dispositivo inválido." });
+      }
+      const { offset, limit } = getPageParameters(request.query);
+      return respond(response, 200, await getDeviceHistoryPage(redis, path[1], offset, limit));
     }
     if (path.length === 3 && path[0] === "devices" && path[2] === "heartbeat" && request.method === "GET") {
       const device = (await getDevices(redis)).find(({ id }) => id === path[1]);
